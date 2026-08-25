@@ -1,0 +1,68 @@
+# Your search definition. Everything downstream reads from this file.
+#
+# Copy to config/profile.yaml (gitignored) and fill in. The real file is never
+# committed -- it carries your locations and your salary target.
+
+identity:
+  name: Your Name
+  locations_ok: [Bangalore, Bengaluru, Hyderabad, Pune, Chennai, Remote, India]
+  years_experience: 4
+
+  # NEVER auto-answered by the pipeline. Surfaced as a reminder on every
+  # prepared application so you make the call per-employer.
+  notice_period_days: null      # fill in deliberately
+  disclose_current_ctc: false
+
+targets:
+  titles:
+    - DevOps Engineer
+    - Site Reliability Engineer
+    - Cloud Engineer
+    - Platform Engineer
+    - Infrastructure Engineer
+    - Linux Administrator
+    - Cloud Support Engineer
+  compensation:
+    target_lpa_min: 0           # your floor, in LPA
+    target_lpa_stretch: 0       # the number you would move for
+
+# At least `keyword_prefilter_min` of these must appear before an LLM call is spent.
+must_have_any:
+  - linux
+  - azure
+  - aws
+  - kubernetes
+  - terraform
+  - docker
+  - ansible
+  - ci/cd
+  - prometheus
+
+# Instant kill. Matched against title + description in a requirements context;
+# see score.py::_hard_reject_hit for why this is not a plain substring test.
+hard_reject:
+  - "10+ years"
+  - "12+ years"
+  - "15+ years"
+  - "service desk"
+  - "l1 support"
+  - "voice process"
+  - "us citizens only"
+  - "security clearance"
+  - "must be located in the united states"
+  - "unpaid"
+
+# Score deductions, not kills.
+soft_penalty:
+  "java developer": 30
+  "full stack developer": 25
+  "sap basis": 40
+  "salesforce": 40
+  "night shift": 15
+  "rotational shift": 10
+
+thresholds:
+  keyword_prefilter_min: 2    # must_have_any hits needed to earn an LLM call
+  shortlist_min_score: 68     # below this, never enters the review queue
+  notify_daily_cap: 15        # hard cap. Volume is not the goal.
+  stale_after_days: 21        # postings older than this are skipped and archived

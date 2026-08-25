@@ -1,0 +1,34 @@
+services:
+  review:
+    build: .
+    container_name: jobpipe-review
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./out:/app/out
+      - ./config:/app/config
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
+  # Runs the full pipeline every morning at 07:00 IST (01:30 UTC).
+  scheduler:
+    build: .
+    container_name: jobpipe-scheduler
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./out:/app/out
+      - ./config:/app/config
+    environment:
+      - PYTHONPATH=/app/src
+    entrypoint: >
+      sh -c "while true; do
+        python -m jobpipe.cli ingest &&
+        python -m jobpipe.cli score &&
+        python -m jobpipe.cli prepare &&
+        python -m jobpipe.cli notify &&
+        python -m jobpipe.cli track;
+        sleep 86400;
+      done"
+    restart: unless-stopped

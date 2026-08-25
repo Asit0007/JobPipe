@@ -1,0 +1,36 @@
+# ---------------------------------------------------------------------------
+# Personal data. The repo is public; these are not.
+# ---------------------------------------------------------------------------
+# salary targets, locations, search definition
+config/profile.yaml
+# work history -- see CLAUDE.md section 10
+config/facts.yaml
+# private working memory: names the employer and the job-hunt itself
+CLAUDE.md
+.env
+data/
+out/
+
+# Gmail OAuth
+*gmail_credentials*.json
+*gmail_token*.json
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---------------------------------------------------------------------------
+# OS / editor
+# ---------------------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp

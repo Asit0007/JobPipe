@@ -1,0 +1,22 @@
+# Add to your existing ~/.cloudflared/config.yml ingress list, ABOVE the
+# catch-all 404 rule. Reuses the tunnel you already run for QuantBot.
+
+# tunnel: <your-existing-tunnel-uuid>
+# credentials-file: /home/ubuntu/.cloudflared/<uuid>.json
+
+ingress:
+  - hostname: jobs.yourdomain.com
+    service: http://localhost:8080
+
+  # ... your existing QuantBot rules ...
+
+  - service: http_status:404
+
+# Then:
+#   cloudflared tunnel route dns <tunnel-name> jobs.yourdomain.com
+#   sudo systemctl restart cloudflared
+#
+# IMPORTANT: put jobs.yourdomain.com behind Cloudflare Access before you use it.
+# Zero Trust -> Access -> Applications -> Add -> Self-hosted
+#   Policy: Allow / Emails / your@email.com
+# Free for up to 50 users. Without this, your work history is on the open web.

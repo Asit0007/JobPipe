@@ -1,0 +1,49 @@
+# ============================================================================
+# THE FACTS FILE - the anti-hallucination boundary of this whole pipeline.
+#
+# Copy to config/facts.yaml (gitignored) and replace every line below with
+# something you actually did. The examples here are STRUCTURE, not content.
+#
+# The tailoring model may SELECT from these facts, REORDER them, and REWORD
+# them. It may not invent anything outside this file. tailor.py validates that
+# every returned fact ID exists here and refuses to render if one does not.
+#
+# `verified: false` facts are BLOCKED from use. Read each one, confirm you can
+# defend it in a live interview, then flip it to true. This is deliberate
+# friction - it is the difference between a tailored resume and a fabricated one.
+#
+# Fact IDs must be unique across the whole file and must match ^[A-Z]\d{3}$.
+# config.py validates this on load and fails loudly on a typo.
+# ============================================================================
+
+roles:
+  - id: current_employer
+    company: Your Employer
+    title: Your Title
+    start: "2022-08"
+    end: "present"
+    facts:
+      - {id: F001, verified: false, tags: [linux, rhel, ubuntu],
+         text: "One concrete thing you did, stated plainly, with no invented metric"}
+      - {id: F002, verified: false, tags: [azure, cloud],
+         text: "Another. If a number belongs here, it must be a number you can source"}
+
+projects:
+  - id: sample_project
+    name: Project Name
+    url: ""          # public repo or writeup, if there is one
+    facts:
+      - {id: P001, verified: false, tags: [terraform, iac],
+         text: "What the project does and what you built in it"}
+
+certifications:
+  - {id: C001, verified: false, name: "Certification name exactly as issued", year: ""}
+  - {id: C002, verified: false, name: "Another one", year: "", status: "in progress"}
+
+skills:
+  # Only list what you would be comfortable being screen-shared on.
+  # score.py and screening.py both read these -- an inflated list here produces
+  # scores you cannot live up to in the interview.
+  strong:   [Linux, Docker, Bash, Git]
+  working:  [Terraform, Prometheus, GitHub Actions]
+  exposure: [Kubernetes, Python]

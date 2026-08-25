@@ -1,0 +1,33 @@
+# Per-company ATS slugs. There is no API that lists an ATS's customers, so this
+# file IS the discovery layer - it is the part you maintain by hand.
+#
+# Slugs below are SEEDS and may be wrong or stale. Run `make verify` before
+# trusting them; it pings each endpoint and prints the dead ones.
+#
+# To add a company: open its careers page and read the URL.
+#   boards.greenhouse.io/SLUG   -> greenhouse
+#   jobs.lever.co/SLUG          -> lever
+#   jobs.ashbyhq.com/SLUG       -> ashby
+#   apply.workable.com/SLUG     -> workable
+
+greenhouse:
+  - stripe
+  - databricks
+  - dropbox
+  - twilio
+  - gitlab
+  - hashicorp
+  - cloudflare
+  - airbnb
+
+lever:
+  - netflix
+  - plaid
+  - atlassian
+
+ashby:
+  - ramp
+  - linear
+  - vanta
+
+workable: []
