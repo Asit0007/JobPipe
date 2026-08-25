@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -15,12 +17,15 @@ from . import db
 from .config import TEMPLATE_DIR
 from .db import now
 
-app = FastAPI(title="jobpipe review")
 
-
-@app.on_event("startup")
-def _startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # @app.on_event("startup") is deprecated and slated for removal.
     db.init()
+    yield
+
+
+app = FastAPI(title="jobpipe review", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)

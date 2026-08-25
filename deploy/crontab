@@ -1,0 +1,13 @@
+# jobpipe schedule. Times are container-local (TZ=Asia/Kolkata, set in the
+# Dockerfile), so these are IST and they do not drift.
+#
+# Weekdays only: applying on a Sunday morning puts you at the bottom of a
+# Monday inbox. One full run at 07:00 leaves the queue waiting when you sit
+# down with coffee.
+#
+# min hour dom mon dow  command
+   0   7    *   *  1-5  python -m jobpipe.cli ingest && python -m jobpipe.cli score && python -m jobpipe.cli prepare && python -m jobpipe.cli notify
+
+# Reply tracking is cheap and worth running more often than the pipeline.
+   0  13    *   *  1-5  python -m jobpipe.cli track
+   0  19    *   *  1-5  python -m jobpipe.cli track

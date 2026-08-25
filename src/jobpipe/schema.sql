@@ -1,6 +1,11 @@
 -- Job lifecycle:
 --   discovered -> scored -> shortlisted -> prepared -> queued
---   -> applied (SET BY YOU, never by the pipeline) -> responded / rejected / closed
+--   -> applied (SET BY YOU, never by the pipeline) -> responded
+--
+-- Terminal side-branches:
+--   filtered  killed by the free prefilter, no LLM call spent
+--   stale     not seen in `stale_after_days`; archived, never shown again
+--   skipped   you looked at it in the dashboard and passed
 --
 -- Nothing in this codebase writes 'applied'. That transition happens only when
 -- you click the button in the review UI, after you have submitted it yourself.

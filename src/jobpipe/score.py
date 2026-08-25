@@ -1,15 +1,16 @@
 """Two-stage scoring: free deterministic prefilter, then Gemini on survivors.
 
-The prefilter exists to protect the 1500/day free-tier quota. Roughly 70% of
-ingested postings die here for free, so the LLM budget goes to the ones that
-could plausibly be a fit.
+The prefilter exists to protect the free-tier quota. Roughly 70% of ingested
+postings die here for free, so the LLM budget goes to the ones that could
+plausibly be a fit.
 """
 from __future__ import annotations
 
 import json
+import re
 
-from . import db
-from .config import MODEL_SCORE, profile
+from . import db, jdfetch
+from .config import MODEL_SCORE, facts, profile
 from .llm import QuotaExhausted, budget_remaining, generate_json
 from .normalize import looks_like_staffing_firm
 
@@ -49,13 +50,45 @@ Scoring guidance:
 Penalise heavily if the required experience exceeds {years} years by more than 3.
 """
 
+# --------------------------------------------------------------------------
+# Hard reject, with the false-negative fixed
+#
+# A plain substring test on "10+ years" also kills "our team has 10+ years of
+# combined experience" -- a perfectly good posting, silently discarded. Terms
+# that look like an experience requirement now have to appear in one, and not
+# inside a sentence that is describing the team rather than the candidate.
+# --------------------------------------------------------------------------
+_YEARS_TERM = re.compile(r"\d+\s*\+?\s*(years?|yrs?)", re.I)
+_WINDOW = 60
+_EXPERIENCE = re.compile(r"\bexp(erience|\.)?\b", re.I)
+_NOT_ABOUT_YOU = re.compile(
+    r"\b(combined|collective|cumulative|between us|our team|the team has|we have|"
+    r"founded|in business|serving clients|track record)\b", re.I
+)
+
+
+def _hard_reject_hit(term: str, blob: str) -> bool:
+    """True if `term` is a genuine disqualifier in this text."""
+    if not _YEARS_TERM.search(term):
+        return term in blob                      # plain terms stay plain
+
+    for m in re.finditer(re.escape(term), blob):
+        lo = max(0, m.start() - _WINDOW)
+        window = blob[lo:m.end() + _WINDOW]
+        if not _EXPERIENCE.search(window):
+            continue                             # a number, but not about experience
+        if _NOT_ABOUT_YOU.search(window):
+            continue                             # describing the company, not the role
+        return True
+    return False
+
 
 def prefilter(job) -> tuple[bool, int, str]:
     p = profile()
     blob = f"{job['title']} {job['description'] or ''}".lower()
 
     for term in p.get("hard_reject", []):
-        if term.lower() in blob:
+        if _hard_reject_hit(term.lower(), blob):
             return False, 0, f"hard reject: {term}"
 
     hits = sum(1 for kw in p["must_have_any"] if kw.lower() in blob)
@@ -75,13 +108,28 @@ def apply_penalties(score: int, job) -> tuple[int, list[str]]:
     if looks_like_staffing_firm(job["company"], job["description"] or ""):
         score -= 8
         applied.append("-8 (staffing repost)")
+    # Adzuna returns snippets, not full JDs, so its scores are guesses made on
+    # a third of the evidence. Nudge them down rather than trusting them.
+    if job["source"] == "adzuna" and len(job["description"] or "") < 800:
+        score -= 5
+        applied.append("-5 (truncated JD)")
     return max(0, min(100, score)), applied
 
 
 def run(log=print) -> None:
     p = profile()
-    facts_cfg = __import__("jobpipe.config", fromlist=["facts"]).facts()
-    skills = facts_cfg.get("skills", {})
+    skills = facts().get("skills", {})
+
+    stale_days = p["thresholds"].get("stale_after_days")
+    if stale_days:
+        n = db.archive_stale(int(stale_days))
+        if n:
+            log(f"archived {n} posting(s) not seen in {stale_days} days")
+
+    # Postings that arrived without a description would die in the prefilter for
+    # free and for the wrong reason. Fill them in first.
+    jdfetch.run(log=log)
+
     rows = db.fetch(status="discovered", limit=1000)
     log(f"scoring {len(rows)} jobs | Gemini budget left: {budget_remaining()}")
 

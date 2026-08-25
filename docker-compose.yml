@@ -1,3 +1,5 @@
+# The dashboard is published on 127.0.0.1 only. Reach it from outside the box
+# through the Cloudflare Tunnel (see deploy/), never by opening a port.
 services:
   review:
     build: .
@@ -11,7 +13,7 @@ services:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped
 
-  # Runs the full pipeline every morning at 07:00 IST (01:30 UTC).
+  # Runs the pipeline on a real schedule -- see deploy/crontab.
   scheduler:
     build: .
     container_name: jobpipe-scheduler
@@ -20,15 +22,6 @@ services:
       - ./data:/app/data
       - ./out:/app/out
       - ./config:/app/config
-    environment:
-      - PYTHONPATH=/app/src
-    entrypoint: >
-      sh -c "while true; do
-        python -m jobpipe.cli ingest &&
-        python -m jobpipe.cli score &&
-        python -m jobpipe.cli prepare &&
-        python -m jobpipe.cli notify &&
-        python -m jobpipe.cli track;
-        sleep 86400;
-      done"
+      - ./deploy/crontab:/app/crontab:ro
+    command: ["supercronic", "-passthrough-logs", "/app/crontab"]
     restart: unless-stopped

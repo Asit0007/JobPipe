@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import db
+from . import db, screening
 from .config import MODEL_TAILOR, OUT_DIR, facts
 from .llm import QuotaExhausted, generate_json
 
@@ -111,7 +111,18 @@ def run(log=print, limit: int = 15) -> None:
             log(f"  ! nothing valid returned for {job['company']}, skipping")
             continue
 
-        doc = _render(job, out, kept, rejected)
+        # Screening answers: one extra Gemini call per prepared job. Budget for
+        # it -- these are the questions that actually eat the evening, and the
+        # dashboard's prepared-doc panel has always implied they exist.
+        screen = None
+        try:
+            screen = screening.generate_for(job)
+        except QuotaExhausted:
+            log("  ! budget spent before screening answers; resume prepared without them")
+        except Exception as e:
+            log(f"  screening failed for {job['company']}: {type(e).__name__}")
+
+        doc = _render(job, out, kept, rejected, screen)
         path = OUT_DIR / f"{job['id']:05d}_{_slug(job['company'])}.md"
         path.write_text(doc)
 
@@ -126,7 +137,7 @@ def _slug(s: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in s.lower())[:40].strip("-")
 
 
-def _render(job, out, kept, rejected) -> str:
+def _render(job, out, kept, rejected, screen: dict | None = None) -> str:
     lines = [
         f"# {job['title']}", f"**{job['company']}** - {job['location'] or 'n/a'}",
         f"Fit score: **{job['score']}** - {job['score_reason']}",
@@ -142,6 +153,10 @@ def _render(job, out, kept, rejected) -> str:
         "\n## Cover note\n", out.get("cover_note", ""),
         "\n## Be ready for this question\n", out.get("gap_honesty", ""),
     ]
+    if screen and screen.get("answers"):
+        lines += ["\n---\n", screening.render(screen)]
+    elif screen and screen.get("error"):
+        lines.append(f"\n> Screening answers unavailable: {screen['error']}")
     if rejected:
         lines.append(f"\n> Dropped unverified fact IDs: {', '.join(rejected)}")
     lines.append("\n---\n**You submit this yourself.** Nothing here has been sent anywhere.")

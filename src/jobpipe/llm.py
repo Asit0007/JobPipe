@@ -16,14 +16,14 @@ descriptions, and PII is reattached locally at render time.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import random
 import re
 import time
-from dataclasses import dataclass
+from contextlib import contextmanager
 from datetime import date
-from pathlib import Path
 
 import httpx
 
@@ -62,52 +62,90 @@ def redact(text: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# Rate limiting + daily budget
+# Rate limiting + daily budget -- CROSS-PROCESS
+#
+# Both used to be module state, which is fine until the compose scheduler runs
+# `score` while you run `prepare` by hand. Then there are two token buckets,
+# each politely staying under 12 RPM, and Google sees 24. The budget counter
+# had the same problem in worse form: an unlocked read-modify-write on a JSON
+# file, so concurrent increments were simply lost.
+#
+# One file, one flock, holding both the day's count and the recent request
+# timestamps. Every process coordinates through it. Timestamps are wall-clock,
+# not monotonic -- monotonic clocks are not comparable across processes.
 # --------------------------------------------------------------------------
-@dataclass
-class _Bucket:
-    rpm: int
-    _stamps: list[float]
-
-    def wait(self) -> None:
-        now = time.monotonic()
-        self._stamps[:] = [s for s in self._stamps if now - s < 60]
-        if len(self._stamps) >= self.rpm:
-            sleep_for = 60 - (now - self._stamps[0]) + 0.5
-            time.sleep(max(sleep_for, 0))
-            self.wait()
-            return
-        self._stamps.append(time.monotonic())
+STATE_FILE = BUDGET_FILE          # kept under the old name; same file on disk
 
 
-_bucket = _Bucket(rpm=int(env("GEMINI_RPM", "12")), _stamps=[])
+@contextmanager
+def _locked_state():
+    """Exclusive access to the shared counter file. Always writes back.
 
-
-def _budget_check_and_increment() -> None:
-    cap = int(env("GEMINI_RPD_BUDGET", "1200"))
-    today = date.today().isoformat()
-    state = {"date": today, "count": 0}
-    if BUDGET_FILE.exists():
+    The write must be flushed AND fsynced before the lock is released. Python
+    file objects buffer, and a buffer that flushes on close() flushes after the
+    unlock -- which lets the next process read stale state and lose the
+    increment. That defeats the entire point of taking the lock.
+    """
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(STATE_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        raw = b""
+        while chunk := os.read(fd, 65536):
+            raw += chunk
         try:
-            loaded = json.loads(BUDGET_FILE.read_text())
-            if loaded.get("date") == today:
-                state = loaded
+            state = json.loads(raw) if raw.strip() else {}
         except json.JSONDecodeError:
-            pass
-    if state["count"] >= cap:
-        raise QuotaExhausted(
-            f"Daily budget of {cap} Gemini calls reached. Resets at midnight Pacific."
-        )
-    state["count"] += 1
-    BUDGET_FILE.write_text(json.dumps(state))
+            state = {}
+        today = date.today().isoformat()
+        if state.get("date") != today:
+            state = {"date": today, "count": 0, "stamps": []}
+        state.setdefault("count", 0)
+        state.setdefault("stamps", [])
+
+        yield state
+
+        payload = json.dumps(state).encode()
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, payload)
+        os.fsync(fd)
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _reserve_slot() -> None:
+    """Claim one request against both the RPM window and the daily budget.
+
+    Blocks until a slot is free. The lock is released while sleeping so other
+    processes are not held up behind us.
+    """
+    rpm = int(env("GEMINI_RPM", "12"))
+    cap = int(env("GEMINI_RPD_BUDGET", "1200"))
+
+    while True:
+        with _locked_state() as state:
+            if state["count"] >= cap:
+                raise QuotaExhausted(
+                    f"Daily budget of {cap} Gemini calls reached. Resets at midnight Pacific."
+                )
+            wall = time.time()
+            state["stamps"] = [s for s in state["stamps"] if wall - s < 60]
+            if len(state["stamps"]) < rpm:
+                state["stamps"].append(wall)
+                state["count"] += 1
+                return
+            sleep_for = 60 - (wall - min(state["stamps"])) + 0.5
+        time.sleep(max(sleep_for, 0.1))
 
 
 def budget_remaining() -> int:
     cap = int(env("GEMINI_RPD_BUDGET", "1200"))
-    if not BUDGET_FILE.exists():
+    if not STATE_FILE.exists():
         return cap
     try:
-        state = json.loads(BUDGET_FILE.read_text())
+        state = json.loads(STATE_FILE.read_text() or "{}")
     except json.JSONDecodeError:
         return cap
     if state.get("date") != date.today().isoformat():
@@ -138,8 +176,10 @@ def generate(prompt: str, *, model: str, json_out: bool = True,
     delay = 2.0
 
     for attempt in range(max_retries):
-        _budget_check_and_increment()
-        _bucket.wait()
+        # Reserved per ATTEMPT, not per call: a retry is a real request that
+        # Google counts, so the budget must count it too. A bad retry loop can
+        # therefore eat the day -- that is the intended, visible behaviour.
+        _reserve_slot()
         try:
             r = httpx.post(url, params={"key": key}, json=payload, timeout=90)
         except httpx.RequestError as e:
