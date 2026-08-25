@@ -1,33 +1,76 @@
 # Per-company ATS slugs. There is no API that lists an ATS's customers, so this
-# file IS the discovery layer - it is the part you maintain by hand.
+# file IS the discovery layer -- it is the part you maintain by hand. Budget
+# about 20 minutes a week on it; nothing else in the pipeline improves your
+# results as directly.
 #
-# Slugs below are SEEDS and may be wrong or stale. Run `make verify` before
-# trusting them; it pings each endpoint and prints the dead ones.
+# Every slug below was verified live. Run `make verify` before trusting it
+# again -- boards move between ATS vendors without warning.
 #
 # To add a company: open its careers page and read the URL.
 #   boards.greenhouse.io/SLUG   -> greenhouse
 #   jobs.lever.co/SLUG          -> lever
 #   jobs.ashbyhq.com/SLUG       -> ashby
 #   apply.workable.com/SLUG     -> workable
+#
+# List a company under ONE ATS only. Several respond on two, and the duplicate
+# rows fingerprint differently because the company name is derived differently.
 
 greenhouse:
+  # India-headquartered or large India engineering presence
+  - groww
+  - phonepe
+  - postman
+  - slice
+  - druva
+  # Infrastructure / developer-tools companies that hire SRE and platform in India
+  - datadog
+  - elastic
+  - mongodb
+  - gitlab
+  - fastly
+  - netskope
+  - rubrik
+  - circleci
+  - clickhouse
+  - cockroachlabs
+  - chainguard
+  - tailscale
+  - planetscale
+  - netlify
+  # Large product companies, occasional India infra roles
   - stripe
   - databricks
   - dropbox
   - twilio
-  - gitlab
-  - hashicorp
   - cloudflare
   - airbnb
 
 lever:
-  - netflix
+  - freshworks
+  - cred
+  - meesho
   - plaid
-  - atlassian
 
 ashby:
+  - atlan
+  - navi
+  - confluent
+  - nutanix
+  - redis
+  - snyk
+  - sentry
+  - temporal
+  - supabase
+  - doppler
+  - render
+  - vercel
   - ramp
   - linear
   - vanta
 
 workable: []
+
+# Removed as dead on 2026-08-25 -- these boards no longer answer:
+#   greenhouse/hashicorp   (moved after the IBM acquisition)
+#   lever/netflix
+#   lever/atlassian

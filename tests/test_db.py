@@ -59,3 +59,20 @@ def test_archive_stale_leaves_human_owned_rows_alone():
     with db.connect() as c:
         got = dict(c.execute("SELECT title, status FROM jobs").fetchall())
     assert got == {"Old Discovered": "stale", "Old Applied": "applied"}
+
+
+def test_ats_rows_are_never_dropped_as_reposts():
+    # Measured against a live board, the fuzzy rule folded "Senior Channel
+    # Partner Manager" into "Channel Partner Manager". ATS boards do not repost.
+    from jobpipe.cli import _is_repost
+    db.upsert_job(_job(title="Channel Partner Manager", url="https://example.com/x"))
+    senior = _job(source="ashby", title="Senior Channel Partner Manager",
+                  url="https://example.com/y")
+    assert not _is_repost(senior)
+
+
+def test_aggregator_reposts_are_still_dropped():
+    from jobpipe.cli import _is_repost
+    db.upsert_job(_job(title="DevOps Engineer - Cloud", url="https://example.com/x"))
+    repost = _job(source="adzuna", title="Cloud DevOps Engineer", url="https://example.com/y")
+    assert _is_repost(repost)

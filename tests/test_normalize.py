@@ -34,3 +34,22 @@ def test_different_companies_never_duplicate():
     a = {"company": "Acme", "title": "DevOps Engineer"}
     b = {"company": "Globex", "title": "DevOps Engineer"}
     assert not is_near_duplicate(a, b)
+
+
+def test_different_locations_are_not_duplicates():
+    # A Toronto req and a New York req are two jobs, however alike the titles.
+    a = {"company": "Acme", "title": "Account Executive, Canada", "location": "Toronto, ON"}
+    b = {"company": "Acme", "title": "Account Executive | Commercial", "location": "New York, NY"}
+    assert not is_near_duplicate(a, b)
+
+
+def test_location_is_ignored_when_one_side_lacks_it():
+    a = {"company": "Acme", "title": "DevOps Engineer - Cloud", "location": ""}
+    b = {"company": "Acme", "title": "Cloud DevOps Engineer", "location": "Bangalore"}
+    assert is_near_duplicate(a, b)
+
+
+def test_same_location_reworded_title_is_still_a_duplicate():
+    a = {"company": "Acme Pvt Ltd", "title": "DevOps Engineer - Cloud", "location": "Bengaluru"}
+    b = {"company": "Acme Limited", "title": "Cloud DevOps Engineer", "location": "Bangalore, KA"}
+    assert is_near_duplicate(a, b)

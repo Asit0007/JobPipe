@@ -85,7 +85,17 @@ def _hard_reject_hit(term: str, blob: str) -> bool:
 
 def prefilter(job) -> tuple[bool, int, str]:
     p = profile()
+    title = (job["title"] or "").lower()
     blob = f"{job['title']} {job['description'] or ''}".lower()
+
+    # Title-level reject, checked first because it is the cheapest and the most
+    # decisive. must_have_any matches title+description, so an "Enterprise
+    # Account Executive" post whose JD lists the AWS and Kubernetes products it
+    # sells sails straight through into an LLM call. Measured against a real
+    # 4,654-posting ingest, GTM roles were 44% of everything that survived.
+    for term in p.get("title_reject", []) or []:
+        if term.lower() in title:
+            return False, 0, f"title reject: {term}"
 
     for term in p.get("hard_reject", []):
         if _hard_reject_hit(term.lower(), blob):

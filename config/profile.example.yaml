@@ -38,6 +38,30 @@ must_have_any:
   - ci/cd
   - prometheus
 
+# Rejected on the title alone, before anything else runs. These are roles that
+# advertise your whole toolchain because they SELL it -- the JD is full of
+# Kubernetes and Terraform and none of the job is. Cheapest filter in the
+# pipeline and, measured on a real ingest, the highest-yield one.
+title_reject:
+  - account executive
+  - account manager
+  - business development
+  - customer success
+  - sales                    # also catches "pre-sales", "sales engineer"
+  - seller
+  - solutions engineer
+  - solutions consultant
+  - recruiter
+  - talent acquisition
+  - marketing
+  - product manager
+  - program manager
+  - designer
+  - attorney
+  - counsel
+  - accountant
+  - controller
+
 # Instant kill. Matched against title + description in a requirements context;
 # see score.py::_hard_reject_hit for why this is not a plain substring test.
 hard_reject:
@@ -60,6 +84,11 @@ soft_penalty:
   "salesforce": 40
   "night shift": 15
   "rotational shift": 10
+  # Adjacent but customer-facing. Real roles, wrong shape -- penalised, not
+  # killed, so a genuinely good one can still climb over the threshold.
+  "solutions architect": 25
+  "forward deployed": 20
+  "analyst": 15
 
 thresholds:
   keyword_prefilter_min: 2    # must_have_any hits needed to earn an LLM call

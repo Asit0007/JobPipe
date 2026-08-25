@@ -97,7 +97,7 @@ def recent_by_company(company_canonical: str, within_days: int = 30) -> list[sql
     """Candidate rows for the fuzzy near-duplicate check in ingest."""
     with connect() as c:
         return c.execute(
-            "SELECT id, company, title FROM jobs "
+            "SELECT id, company, title, location FROM jobs "
             "WHERE company_canonical = ? AND first_seen >= ?",
             (company_canonical, days_ago(within_days)),
         ).fetchall()

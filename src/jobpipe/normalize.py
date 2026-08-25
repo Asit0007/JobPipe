@@ -39,14 +39,36 @@ def canon_location(loc: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _city(loc: str) -> str:
+    """First token of a canonicalised location -- near enough to the city.
+
+    canon_location keeps the state suffix, so "Bengaluru" and "Bangalore, KA"
+    canonicalise to different strings despite being the same place. Comparing
+    the leading token gets those right, and when it is wrong it errs toward
+    "different", which keeps both postings rather than silently dropping one.
+    """
+    return canon_location(loc).split(" ")[0] if loc else ""
+
+
 def fingerprint(company: str, title: str, location: str) -> str:
     key = f"{canon_company(company)}|{canon_title(title)}|{canon_location(location)[:20]}"
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
 def is_near_duplicate(a: dict, b: dict, threshold: int = 88) -> bool:
-    """Catches what the hash misses: same role, slightly different wording."""
+    """Catches what the hash misses: same role, slightly different wording.
+
+    Location participates when both sides have one. Without that gate this
+    folds a Toronto posting into a New York one purely because the titles
+    rhyme -- and canon_title has already stripped the seniority, so
+    "Senior SRE" and "SRE" at one company collapse into a single row. At a
+    consultancy reposting the same requisition that is the point; at a real
+    employer those are two jobs you could apply to separately.
+    """
     if canon_company(a["company"]) != canon_company(b["company"]):
+        return False
+    la, lb = _city(a.get("location", "")), _city(b.get("location", ""))
+    if la and lb and la != lb:
         return False
     return fuzz.token_sort_ratio(canon_title(a["title"]), canon_title(b["title"])) >= threshold
 

@@ -57,11 +57,22 @@ def cmd_ingest():
     db.log_run("ingest", True, f"{total['inserted']} new / {total['near_dupe']} dupes")
 
 
+# An ATS board is authoritative: one row per open requisition, no reposts. The
+# fuzzy check only earns its keep on aggregators and email alerts, where the
+# same job really does arrive three times under three titles. Running it over
+# ATS rows costs real postings -- measured against a live board it collapsed
+# "Senior Channel Partner Manager" into "Channel Partner Manager".
+AUTHORITATIVE_SOURCES = ("greenhouse", "lever", "ashby")
+
+
 def _is_repost(job: dict) -> bool:
+    if job["source"] in AUTHORITATIVE_SOURCES:
+        return False
     for row in db.recent_by_company(job["company_canonical"], within_days=30):
         if row["title"] == job["title"]:
             continue          # exact match is the fingerprint's job, not ours
-        if is_near_duplicate(job, {"company": row["company"], "title": row["title"]}):
+        if is_near_duplicate(job, {"company": row["company"], "title": row["title"],
+                                   "location": row["location"]}):
             return True
     return False
 
