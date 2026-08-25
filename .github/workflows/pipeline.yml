@@ -1,0 +1,92 @@
+# Fallback scheduler. The OCI box is the real deployment -- see deploy/.
+#
+# Read this before relying on it: an Actions runner is ephemeral, so the SQLite
+# file that IS the dedup layer has to be carried between runs in the cache. The
+# cache is best-effort. GitHub evicts entries after 7 days of no reads and when
+# the repo's 10 GB budget fills, and on a miss the pipeline starts from an empty
+# database -- every posting looks new, and you get a Telegram queue full of
+# roles you already reviewed. Annoying, not dangerous, but it is the reason
+# this is the fallback and not the deployment.
+#
+# Gmail is also effectively unavailable here: the OAuth flow needs a browser
+# once, and the refresh token would have to live in a secret and be written
+# back after every rotation. The ATS sources work fine.
+
+name: pipeline
+
+on:
+  schedule:
+    - cron: "30 1 * * 1-5"      # 07:00 IST, weekdays. UTC in cron, always.
+  workflow_dispatch:            # and a manual button
+
+concurrency:
+  # The budget counter coordinates across processes on one box, not across
+  # machines. Two runners at once would each think they own the full quota.
+  group: jobpipe-pipeline
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Restore the job database
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: jobpipe-db-${{ github.run_id }}
+          restore-keys: jobpipe-db-
+
+      - name: Write config from secrets
+        env:
+          PROFILE_YAML: ${{ secrets.PROFILE_YAML }}
+          FACTS_YAML: ${{ secrets.FACTS_YAML }}
+        run: |
+          # profile.yaml and facts.yaml are gitignored -- they hold your work
+          # history and your salary target. Paste each file's contents into a
+          # repository secret of the same name.
+          if [ -z "$PROFILE_YAML" ] || [ -z "$FACTS_YAML" ]; then
+            echo "::error::Set the PROFILE_YAML and FACTS_YAML repository secrets."
+            exit 1
+          fi
+          printf '%s' "$PROFILE_YAML" > config/profile.yaml
+          printf '%s' "$FACTS_YAML"   > config/facts.yaml
+
+      - name: Run the pipeline
+        env:
+          PYTHONPATH: src
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MODEL_SCORE: ${{ vars.MODEL_SCORE || 'gemini-flash-lite-latest' }}
+          MODEL_TAILOR: ${{ vars.MODEL_TAILOR || 'gemini-flash-latest' }}
+          GEMINI_RPM: ${{ vars.GEMINI_RPM || '12' }}
+          GEMINI_RPD_BUDGET: ${{ vars.GEMINI_RPD_BUDGET || '1200' }}
+          PII_DENY_TERMS: ${{ secrets.PII_DENY_TERMS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+        run: |
+          python -m jobpipe.cli ingest
+          python -m jobpipe.cli score
+          python -m jobpipe.cli prepare
+          python -m jobpipe.cli notify
+          python -m jobpipe.cli status
+
+      - name: Keep the prepared documents
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-${{ github.run_number }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: ignore

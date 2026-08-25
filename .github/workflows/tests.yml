@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+
+      - name: Config templates must be usable as-is
+        run: make config
+
+      - run: make test
+
+      - name: Nothing may submit an application
+        run: |
+          # The one invariant worth a CI check. If a browser driver or a board
+          # credential ever lands in this repo, fail loudly. See CLAUDE.md 2.
+          if grep -rniE 'selenium|playwright|puppeteer|webdriver|undetected_chrome' \
+               src/ scripts/ requirements.txt; then
+            echo "::error::Browser automation found. jobpipe never drives a job board."
+            exit 1
+          fi
+          if grep -rniE '(linkedin|naukri|indeed)_(password|passwd|pwd)' src/ scripts/; then
+            echo "::error::Job-board credential found. jobpipe never stores one."
+            exit 1
+          fi
+          echo "ok: no browser automation, no board credentials"
