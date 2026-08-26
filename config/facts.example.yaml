@@ -23,27 +23,50 @@ roles:
     start: "2022-08"
     end: "present"
     facts:
-      - {id: F001, verified: false, tags: [linux, rhel, ubuntu],
-         text: "One concrete thing you did, stated plainly, with no invented metric"}
-      - {id: F002, verified: false, tags: [azure, cloud],
-         text: "Another. If a number belongs here, it must be a number you can source"}
+      - {
+          id: F001,
+          verified: false,
+          tags: [linux, rhel, ubuntu],
+          text: "One concrete thing you did, stated plainly, with no invented metric",
+        }
+      - {
+          id: F002,
+          verified: false,
+          tags: [azure, cloud],
+          text: "Another. If a number belongs here, it must be a number you can source",
+        }
 
 projects:
   - id: sample_project
     name: Project Name
-    url: ""          # public repo or writeup, if there is one
+    url: "" # public repo or writeup, if there is one
     facts:
-      - {id: P001, verified: false, tags: [terraform, iac],
-         text: "What the project does and what you built in it"}
+      - {
+          id: P001,
+          verified: false,
+          tags: [terraform, iac],
+          text: "What the project does and what you built in it",
+        }
 
 certifications:
-  - {id: C001, verified: false, name: "Certification name exactly as issued", year: ""}
-  - {id: C002, verified: false, name: "Another one", year: "", status: "in progress"}
+  - {
+      id: C001,
+      verified: false,
+      name: "Certification name exactly as issued",
+      year: "",
+    }
+  - {
+      id: C002,
+      verified: false,
+      name: "Another one",
+      year: "",
+      status: "in progress",
+    }
 
 skills:
   # Only list what you would be comfortable being screen-shared on.
   # score.py and screening.py both read these -- an inflated list here produces
   # scores you cannot live up to in the interview.
-  strong:   [Linux, Docker, Bash, Git]
-  working:  [Terraform, Prometheus, GitHub Actions]
+  strong: [Linux, Docker, Bash, Git]
+  working: [Terraform, Prometheus, GitHub Actions]
   exposure: [Kubernetes, Python]
