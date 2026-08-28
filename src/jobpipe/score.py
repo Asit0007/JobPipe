@@ -191,7 +191,8 @@ def run(log=print) -> None:
     jdfetch.run(log=log)
 
     rows = db.fetch(status="discovered", limit=1000)
-    log(f"scoring {len(rows)} jobs | Gemini budget left: {budget_remaining()}")
+    log(f"scoring {len(rows)} jobs | {MODEL_SCORE} budget left: "
+        f"{budget_remaining(MODEL_SCORE)}")
 
     scored = killed = 0
     for job in rows:

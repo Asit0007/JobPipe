@@ -117,7 +117,7 @@ def cmd_track():
 
 
 def cmd_status():
-    from .llm import budget_remaining
+    from .llm import budget_by_model, budget_remaining
     with db.connect() as c:
         rows = c.execute(
             "SELECT status, COUNT(*) n FROM jobs GROUP BY status ORDER BY n DESC"
@@ -127,7 +127,14 @@ def cmd_status():
         print(f"  {r['status']:<14} {r['n']}")
     if not rows:
         print("  (empty -- run ingest)")
-    print(f"\ngemini calls left today: {budget_remaining()}")
+    # Per model, because the quota is per model: 500/day each, not shared.
+    per_model = budget_by_model()
+    if per_model:
+        print("\ngemini calls left today")
+        for name, left in per_model.items():
+            print(f"  {name:<28} {left}")
+    else:
+        print(f"\ngemini calls left today: {budget_remaining()} per model (none used yet)")
 
     stale = profile()["thresholds"].get("stale_after_days")
     if stale:

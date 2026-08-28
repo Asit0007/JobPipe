@@ -98,10 +98,14 @@ def _locked_state():
         except json.JSONDecodeError:
             state = {}
         today = date.today().isoformat()
-        if state.get("date") != today:
-            state = {"date": today, "count": 0, "stamps": []}
-        state.setdefault("count", 0)
-        state.setdefault("stamps", [])
+        # A file from before the per-model split has {"count", "stamps"} at the
+        # top level and no way to say which model spent them. It is discarded
+        # rather than guessed at: the counter is a courtesy guard, Google
+        # enforces the real cap, and mis-attributing yesterday's spend would
+        # lock out a model whose quota is untouched. Self-heals at midnight.
+        if state.get("date") != today or "models" not in state:
+            state = {"date": today, "models": {}}
+        state.setdefault("models", {})
 
         yield state
 
@@ -115,42 +119,89 @@ def _locked_state():
         os.close(fd)
 
 
-def _reserve_slot() -> None:
-    """Claim one request against both the RPM window and the daily budget.
+def _bucket(state: dict, model: str) -> dict:
+    """This model's slice of today's state. Created on first use."""
+    b = state["models"].setdefault(model, {})
+    b.setdefault("count", 0)
+    b.setdefault("stamps", [])
+    return b
+
+
+def _cap() -> int:
+    # 500, measured -- see CLAUDE.md 6. The old default of 1200 was fiction and
+    # let the counter report headroom that Google had already refused.
+    return int(env("GEMINI_RPD_BUDGET", "500"))
+
+
+def _reserve_slot(model: str) -> None:
+    """Claim one request against this MODEL's RPM window and daily budget.
+
+    Google's free-tier quotas are per project PER MODEL -- the 429 names them
+    `GenerateRequestsPerDayPerProjectPerModel-FreeTier`, measured at 500/day on
+    2026-08-28. One shared counter therefore let a long `score` run lock out
+    `prepare`, whose model had spent nothing. Each model now gets its own count
+    and its own RPM window.
+
+    The RPM window is split the same way. Only the DAILY quota was observed
+    directly; Google names its per-minute quota with the same PerModel suffix,
+    so this follows it. If that turns out to be wrong the failure is visible
+    and safe -- 429s with backoff, not silent overspend.
 
     Blocks until a slot is free. The lock is released while sleeping so other
     processes are not held up behind us.
     """
-    rpm = int(env("GEMINI_RPM", "12"))
-    cap = int(env("GEMINI_RPD_BUDGET", "1200"))
+    rpm = int(env("GEMINI_RPM", "10"))
+    cap = _cap()
 
     while True:
         with _locked_state() as state:
-            if state["count"] >= cap:
+            b = _bucket(state, model)
+            if b["count"] >= cap:
                 raise QuotaExhausted(
-                    f"Daily budget of {cap} Gemini calls reached. Resets at midnight Pacific."
+                    f"Daily budget of {cap} Gemini calls for {model} reached. "
+                    "Resets at midnight Pacific. Other models are unaffected."
                 )
             wall = time.time()
-            state["stamps"] = [s for s in state["stamps"] if wall - s < 60]
-            if len(state["stamps"]) < rpm:
-                state["stamps"].append(wall)
-                state["count"] += 1
+            b["stamps"] = [s for s in b["stamps"] if wall - s < 60]
+            if len(b["stamps"]) < rpm:
+                b["stamps"].append(wall)
+                b["count"] += 1
                 return
-            sleep_for = 60 - (wall - min(state["stamps"])) + 0.5
+            sleep_for = 60 - (wall - min(b["stamps"])) + 0.5
         time.sleep(max(sleep_for, 0.1))
 
 
-def budget_remaining() -> int:
-    cap = int(env("GEMINI_RPD_BUDGET", "1200"))
+def _today_models() -> dict:
     if not STATE_FILE.exists():
-        return cap
+        return {}
     try:
         state = json.loads(STATE_FILE.read_text() or "{}")
     except json.JSONDecodeError:
-        return cap
+        return {}
     if state.get("date") != date.today().isoformat():
+        return {}
+    return state.get("models") or {}
+
+
+def budget_remaining(model: str | None = None) -> int:
+    """Calls left today. For one model, or the tightest across those used.
+
+    No argument answers "how many more calls am I sure of", which is what a
+    status line wants -- so it reports the most-spent model, not a total.
+    """
+    cap, models = _cap(), _today_models()
+    if model is not None:
+        return max(cap - (models.get(model) or {}).get("count", 0), 0)
+    if not models:
         return cap
-    return max(cap - state.get("count", 0), 0)
+    return max(cap - max((b or {}).get("count", 0) for b in models.values()), 0)
+
+
+def budget_by_model() -> dict[str, int]:
+    """Calls left today, per model that has been used. Empty before the first call."""
+    cap = _cap()
+    return {m: max(cap - (b or {}).get("count", 0), 0)
+            for m, b in sorted(_today_models().items())}
 
 
 # --------------------------------------------------------------------------
@@ -190,7 +241,7 @@ def generate(prompt: str, *, model: str, json_out: bool = True,
         # Reserved per ATTEMPT, not per call: a retry is a real request that
         # Google counts, so the budget must count it too. A bad retry loop can
         # therefore eat the day -- that is the intended, visible behaviour.
-        _reserve_slot()
+        _reserve_slot(model)
         try:
             r = httpx.post(url, params={"key": key}, json=payload, timeout=90)
         except httpx.RequestError as e:
