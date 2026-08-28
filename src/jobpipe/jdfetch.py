@@ -35,7 +35,17 @@ MIN_USEFUL_CHARS = 400
 # "glassdoor." not "glassdoor.com": the match is a substring of the netloc, so
 # the .com form silently let www.glassdoor.co.in through -- an Indian Glassdoor
 # link would spend a request to be handed the same login wall.
-SKIP_HOSTS = ("linkedin.com", "indeed.com", "glassdoor.", "ziprecruiter.com")
+#
+# "adzuna." earns its place differently. Adzuna's API hands back a redirect
+# landing page (adzuna.in/land/ad/NNNN) and never the employer's own URL, and
+# that page answers 403 to a plain GET -- measured on four rows, all identical.
+# Its descriptions are truncated to ~500 chars, which sits ABOVE
+# MIN_USEFUL_CHARS, so these rows were never selected for a re-fetch anyway and
+# nothing was being wasted. Raising the threshold to catch them, which looks
+# like the obvious fix for 7.15, would instead buy ~374 requests that all 403.
+# The entry makes that explicit so the next person does not try it.
+SKIP_HOSTS = ("linkedin.com", "indeed.com", "glassdoor.", "ziprecruiter.com",
+              "adzuna.")
 
 _robots_cache: dict[str, urllib.robotparser.RobotFileParser | None] = {}
 

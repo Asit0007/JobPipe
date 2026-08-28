@@ -93,3 +93,11 @@ def test_glassdoor_is_in_the_alert_query_and_link_hints():
     from jobpipe.sources.gmail_alerts import QUERY, JOB_LINK_HINTS
     assert "glassdoor.com" in QUERY and "glassdoor.co.in" in QUERY
     assert any("glassdoor" in h for h in JOB_LINK_HINTS)
+
+
+def test_adzuna_landing_pages_are_skipped():
+    """Adzuna hands back adzuna.in/land/ad/NNNN, not the employer's URL, and
+    that page 403s. See the comment on SKIP_HOSTS before "fixing" 7.15."""
+    from jobpipe.jdfetch import SKIP_HOSTS
+    for host in ("www.adzuna.in", "www.adzuna.com", "adzuna.co.uk"):
+        assert any(h in host for h in SKIP_HOSTS), f"{host} should be skipped"
