@@ -22,18 +22,26 @@ from ..config import MODEL_SCORE
 from ..llm import generate_json
 from .base import make_job
 
+# Exact sender addresses where they are known and stable. Glassdoor is matched
+# at the DOMAIN instead: its alert sender was never observed in this mailbox, and
+# a wrong exact address fails silently -- you get no mail and no error, which is
+# the worst way for a source to be broken. `from:domain` also survives Glassdoor
+# moving between subdomains. Tighten it to the real address once one arrives.
 QUERY = (
     'newer_than:3d ('
     'from:jobalerts-noreply@linkedin.com OR '
     'from:jobs-listings@linkedin.com OR '
     'from:info@naukri.com OR from:alerts@naukri.com OR '
-    'from:alert@indeed.com OR from:noreply@indeed.com'
+    'from:alert@indeed.com OR from:noreply@indeed.com OR '
+    'from:glassdoor.com OR from:glassdoor.co.in'
     ')'
 )
 
 LINK_RE = re.compile(r'https?://[^\s"\'<>)]+', re.I)
 JOB_LINK_HINTS = ("linkedin.com/jobs/view", "naukri.com/job-listings", "indeed.com/rc/clk",
-                  "indeed.com/viewjob", "linkedin.com/comm/jobs/view")
+                  "indeed.com/viewjob", "linkedin.com/comm/jobs/view",
+                  "glassdoor.com/job-listing", "glassdoor.co.in/job-listing",
+                  "glassdoor.com/partner/joblisting")
 
 # How far from a title a link may sit and still be considered its link. Anchor
 # markup puts the href just before the visible text, so the window is asymmetric

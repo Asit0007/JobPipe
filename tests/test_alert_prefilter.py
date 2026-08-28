@@ -67,3 +67,29 @@ def test_whitespace_only_description_counts_as_missing():
     ok, _, _ = prefilter(_job(title="DevOps Engineer", source="alert:indeed",
                               description="   \n  "))
     assert ok
+
+
+# --- jdfetch must not spend a request on a host that serves a login wall -----
+
+def test_glassdoor_cctlds_are_skipped_too():
+    """SKIP_HOSTS is a substring match on the netloc, so "glassdoor.com" let
+    www.glassdoor.co.in through and jdfetch paid for a login wall."""
+    from jobpipe.jdfetch import SKIP_HOSTS
+
+    def skipped(host):
+        return any(h in host for h in SKIP_HOSTS)
+
+    for host in ("www.glassdoor.com", "www.glassdoor.co.in", "www.glassdoor.co.uk",
+                 "www.linkedin.com", "in.linkedin.com",
+                 "www.indeed.com", "in.indeed.com"):
+        assert skipped(host), f"{host} should be skipped"
+
+    for host in ("www.naukri.com", "boards.greenhouse.io", "jobs.lever.co",
+                 "jobs.ashbyhq.com", "www.instahyre.com"):
+        assert not skipped(host), f"{host} must stay fetchable"
+
+
+def test_glassdoor_is_in_the_alert_query_and_link_hints():
+    from jobpipe.sources.gmail_alerts import QUERY, JOB_LINK_HINTS
+    assert "glassdoor.com" in QUERY and "glassdoor.co.in" in QUERY
+    assert any("glassdoor" in h for h in JOB_LINK_HINTS)

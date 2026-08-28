@@ -32,7 +32,10 @@ MIN_USEFUL_CHARS = 400
 
 # Hosts that serve a login wall or pure JS to a plain GET. Asking is a waste of
 # a request and of their bandwidth, so we don't.
-SKIP_HOSTS = ("linkedin.com", "indeed.com", "glassdoor.com", "ziprecruiter.com")
+# "glassdoor." not "glassdoor.com": the match is a substring of the netloc, so
+# the .com form silently let www.glassdoor.co.in through -- an Indian Glassdoor
+# link would spend a request to be handed the same login wall.
+SKIP_HOSTS = ("linkedin.com", "indeed.com", "glassdoor.", "ziprecruiter.com")
 
 _robots_cache: dict[str, urllib.robotparser.RobotFileParser | None] = {}
 
