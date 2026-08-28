@@ -169,8 +169,18 @@ def measure_rpm(key: str, model: str) -> None:
     ok = 0
     start = time.time()
     for i in range(6):
-        r = httpx.post(f"{BASE}/models/{model}:generateContent",
-                       params={"key": key}, json=body, timeout=45)
+        # A hang here used to abort the whole preflight by exception, so the
+        # .env recommendation and the config/integration checks -- the two
+        # things you actually run doctor for -- never printed. An overloaded
+        # model is a fact worth reporting, not a reason to lose the report.
+        try:
+            r = httpx.post(f"{BASE}/models/{model}:generateContent",
+                           params={"key": key}, json=body, timeout=45)
+        except httpx.RequestError as e:
+            line(WARN, f"{type(e).__name__} on call {i+1} - {model} is not answering.")
+            line(WARN, "Usually transient overload on Google's side. Retry later;")
+            line(WARN, "if it persists, point MODEL_TAILOR at a pinned version.")
+            break
         if r.status_code == 200:
             ok += 1
         elif r.status_code == 429:
@@ -178,6 +188,10 @@ def measure_rpm(key: str, model: str) -> None:
             line(WARN, f"429 after {ok} call(s). Quota: {q or 'unnamed'}")
             if ok == 0:
                 line(WARN, "Zero succeeded - the model is gated, or today's quota is spent.")
+            break
+        elif r.status_code == 503:
+            line(WARN, f"503 on call {i+1}: {model} is overloaded right now.")
+            line(WARN, "Google-side capacity, not your key or your config.")
             break
         else:
             line(WARN, f"HTTP {r.status_code} on call {i+1}: {r.text[:120]}")

@@ -5,9 +5,16 @@ import jobpipe.config as config
 from jobpipe.tailor import _menu
 
 
-def test_unverified_facts_are_blocked():
+def test_unverified_facts_never_leak_into_the_menu():
+    """Against the REAL config: whatever is unverified must not reach the model.
+
+    This used to also assert that something *was* blocked, which only held while
+    the shipped seed facts were unverified. A fully verified facts.yaml is the
+    goal state, not a test failure. The gate itself is exercised against a
+    fixture in test_only_verified_facts_reach_the_model below, which is where
+    that coverage belongs -- it does not depend on the user's private config.
+    """
     menu, meta = _menu()
-    assert meta["blocked"], "seed facts ship unverified so the gate is exercised"
     for fid in meta["blocked"]:
         assert fid not in menu, f"{fid} leaked into the model's menu"
 

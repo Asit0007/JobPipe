@@ -5,7 +5,7 @@ import sys
 
 from . import db
 from .config import DB_PATH, ConfigError, companies, profile
-from .normalize import canon_company, is_near_duplicate
+from .normalize import AUTHORITATIVE_SOURCES, canon_company, is_near_duplicate
 
 
 def cmd_init():
@@ -57,14 +57,10 @@ def cmd_ingest():
     db.log_run("ingest", True, f"{total['inserted']} new / {total['near_dupe']} dupes")
 
 
-# An ATS board is authoritative: one row per open requisition, no reposts. The
-# fuzzy check only earns its keep on aggregators and email alerts, where the
+# The fuzzy check only earns its keep on aggregators and email alerts, where the
 # same job really does arrive three times under three titles. Running it over
 # ATS rows costs real postings -- measured against a live board it collapsed
 # "Senior Channel Partner Manager" into "Channel Partner Manager".
-AUTHORITATIVE_SOURCES = ("greenhouse", "lever", "ashby")
-
-
 def _is_repost(job: dict) -> bool:
     if job["source"] in AUTHORITATIVE_SOURCES:
         return False

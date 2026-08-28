@@ -73,12 +73,30 @@ def is_near_duplicate(a: dict, b: dict, threshold: int = 88) -> bool:
     return fuzz.token_sort_ratio(canon_title(a["title"]), canon_title(b["title"])) >= threshold
 
 
-def looks_like_staffing_firm(company: str, description: str = "") -> bool:
+# An ATS board is authoritative: one row per open requisition, no reposts.
+AUTHORITATIVE_SOURCES = ("greenhouse", "lever", "ashby")
+
+# A staffing repost announces itself in the COMPANY name, or in client-speak no
+# employer writes about itself. It does not announce itself with the bare word
+# "recruitment": that lives in the EEO footer, the privacy notice and the
+# anti-scam warning of nearly every large-company posting. Matched against the
+# description it flagged 708 of 4,654 rows -- "Recruitment Fraud Alert" on
+# Atlan, an IBM privacy notice on Confluent -- all of them first-party boards
+# where a repost cannot exist. Same terms as before, routed to the right field.
+STAFFING_COMPANY_TERMS = (
+    "staffing", "recruitment", "manpower", "talent acquisition partner",
+)
+STAFFING_CLIENT_SPEAK = (
+    "our client is", "on behalf of our client", "leading mnc",
+    "c2h", "contract to hire", "payroll of",
+)
+
+
+def looks_like_staffing_firm(company: str, description: str = "",
+                             source: str = "") -> bool:
     """Not a rejection -- a flag. Consultancy reposts are noisy but not always bad."""
-    blob = f"{company} {description}".lower()
-    signals = [
-        "staffing", "recruitment", "manpower", "talent acquisition partner",
-        "our client is", "on behalf of our client", "leading mnc",
-        "c2h", "contract to hire", "payroll of",
-    ]
-    return any(s in blob for s in signals)
+    if source in AUTHORITATIVE_SOURCES:
+        return False
+    if any(s in (company or "").lower() for s in STAFFING_COMPANY_TERMS):
+        return True
+    return any(s in (description or "").lower() for s in STAFFING_CLIENT_SPEAK)

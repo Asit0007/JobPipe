@@ -156,8 +156,19 @@ def budget_remaining() -> int:
 # --------------------------------------------------------------------------
 # Call
 # --------------------------------------------------------------------------
+# On a thinking model, reasoning tokens are charged against maxOutputTokens
+# alongside the answer. Measured on the tailor prompt with gemini-3.6-flash:
+# 1,646 thinking + 398 answer against a 2,048 ceiling -> finishReason
+# MAX_TOKENS, JSON cut off mid-string, ValueError. The same call at 8,192 spent
+# 2,538 thinking + 658 answer and finished clean. 2048 was sized for a
+# non-thinking model and is no longer a safe ceiling for anything structured.
+# (thinkingConfig.thinkingBudget=0 is not accepted by this model -- HTTP 400.)
+MAX_OUTPUT_TOKENS = 8192
+
+
 def generate(prompt: str, *, model: str, json_out: bool = True,
-             temperature: float = 0.2, max_retries: int = 5) -> str:
+             temperature: float = 0.2, max_retries: int = 5,
+             max_output_tokens: int = MAX_OUTPUT_TOKENS) -> str:
     key = env("GEMINI_API_KEY")
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not set. Copy .env.example to .env.")
@@ -166,7 +177,7 @@ def generate(prompt: str, *, model: str, json_out: bool = True,
         "contents": [{"parts": [{"text": redact(prompt)}]}],
         "generationConfig": {
             "temperature": temperature,
-            "maxOutputTokens": 2048,
+            "maxOutputTokens": max_output_tokens,
         },
     }
     if json_out:
@@ -203,17 +214,30 @@ def generate(prompt: str, *, model: str, json_out: bool = True,
 
         r.raise_for_status()
         data = r.json()
-        try:
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError):
+        cand = (data.get("candidates") or [{}])[0]
+        # Thinking models can split the answer across parts. Joining them is
+        # correct for a single-part reply too.
+        parts = (cand.get("content") or {}).get("parts") or []
+        text = "".join(p.get("text") or "" for p in parts)
+        if not text:
             reason = data.get("promptFeedback", {}).get("blockReason", "unknown")
             raise RuntimeError(f"Gemini returned no content (reason: {reason})")
+        if cand.get("finishReason") == "MAX_TOKENS":
+            um = data.get("usageMetadata", {})
+            raise RuntimeError(
+                "Gemini hit maxOutputTokens and the reply is truncated "
+                f"(thinking={um.get('thoughtsTokenCount')}, "
+                f"answer={um.get('candidatesTokenCount')}, "
+                f"ceiling={max_output_tokens}). Raise max_output_tokens.")
+        return text
 
     raise QuotaExhausted("Exhausted retries against Gemini (rate limited).")
 
 
-def generate_json(prompt: str, *, model: str, temperature: float = 0.2) -> dict:
-    raw = generate(prompt, model=model, json_out=True, temperature=temperature)
+def generate_json(prompt: str, *, model: str, temperature: float = 0.2,
+                  max_output_tokens: int = MAX_OUTPUT_TOKENS) -> dict:
+    raw = generate(prompt, model=model, json_out=True, temperature=temperature,
+                   max_output_tokens=max_output_tokens)
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned)

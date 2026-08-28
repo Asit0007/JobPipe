@@ -107,15 +107,28 @@ def prefilter(job) -> tuple[bool, int, str]:
     return True, hits, "passed"
 
 
+# Working conditions are stated in the body and never in the title. Every other
+# soft_penalty term names the ROLE, so it belongs to the title alone.
+BODY_MATCHED_PENALTIES = ("night shift", "rotational shift")
+
+
 def apply_penalties(score: int, job) -> tuple[int, list[str]]:
     p = profile()
-    blob = f"{job['title']} {job['description'] or ''}".lower()
+    title = (job["title"] or "").lower()
+    body = f"{title} {(job['description'] or '').lower()}"
     applied = []
+    # Matched on the TITLE. "salesforce" appears in 520 of 4,654 descriptions --
+    # investor lists ("Salesforce Ventures"), integration catalogues, CRM tooling
+    # -- and in 7 titles. Against the description its -40 sank good roles on the
+    # strength of a funding paragraph. Same trap as title_reject: only the title
+    # carries the signal.
     for term, penalty in (p.get("soft_penalty") or {}).items():
-        if term.lower() in blob:
+        t = term.lower()
+        if t in (body if t in BODY_MATCHED_PENALTIES else title):
             score -= int(penalty)
             applied.append(f"-{penalty} ({term})")
-    if looks_like_staffing_firm(job["company"], job["description"] or ""):
+    if looks_like_staffing_firm(job["company"], job["description"] or "",
+                                job["source"]):
         score -= 8
         applied.append("-8 (staffing repost)")
     # Adzuna returns snippets, not full JDs, so its scores are guesses made on
