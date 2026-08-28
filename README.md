@@ -48,7 +48,7 @@ in response to you clicking a button after you have already submitted.
 
 ```mermaid
 flowchart TD
-    A["<b>sources</b><br/>greenhouse · lever · ashby<br/>adzuna · gmail alerts"] --> B["<b>normalize</b><br/>canonicalise · fingerprint · dedup"]
+    A["<b>sources</b><br/>greenhouse · lever · ashby<br/>remotive · remoteok · arbeitnow<br/>jobicy · himalayas<br/>adzuna · gmail alerts"] --> B["<b>normalize</b><br/>canonicalise · fingerprint · dedup"]
     B --> C[("<b>discovered</b>")]
     C --> D{"<b>prefilter</b><br/>free, deterministic<br/>no LLM call spent"}
     D -->|"81% die here"| E["filtered"]
@@ -69,21 +69,29 @@ flowchart TD
 
 ### The funnel is the product
 
-Measured on a real run against 45 live ATS boards:
+Measured end to end against 45 ATS boards, five public feeds and Adzuna:
 
 | stage | count | |
 |---|---:|---|
-| ingested | **4,654** | 45 boards, deduplicated |
-| killed on title | −1,713 | sales roles whose JD lists your whole toolchain |
-| killed on keywords | −1,681 | fewer than 2 must-haves present |
-| killed on hard rejects | −392 | seniority, shift work, geography |
-| **reach an LLM call** | **868** | 19% — *this is what protects the free tier* |
-| shortlisted | ~40–60 | above `shortlist_min_score` |
-| **queued for you** | **15/day** | a hard cap, because volume is not the goal |
+| ingested | **5,873** | 9 sources, deduplicated |
+| killed on keywords | −2,102 | fewer than 2 must-haves present |
+| killed on title | −1,926 | sales roles whose JD lists your whole toolchain |
+| killed on hard rejects | −421 | seniority, shift work, geography |
+| **reach an LLM call** | **974** | 17% — *this is what protects the free tier* |
+| shortlisted | **28** | above `shortlist_min_score` |
+| **queued for you** | 15/day cap | because volume is not the goal |
 
-Every row killed above the LLM line costs nothing. That's the point: the free
-tier gives roughly 15 requests per minute, so the prefilter is what makes a full
-run take one hour instead of six.
+Every row killed above the LLM line costs nothing, and that is the whole design.
+The free tier allows **500 requests per day per model**, so a single unfiltered
+run would exhaust the day before it finished. The prefilter is what makes the
+pipeline fit inside a free quota at all.
+
+> **Calibrate `shortlist_min_score` against your own model's output, not a
+> guess.** The default assumed scores would spread across 0–100. In practice
+> the observed range was 0–85 with a mean of 21, so a threshold of 68 sat above
+> almost everything and shortlisted nothing — silently, with no error. Score
+> a few hundred rows first, look at the distribution, then set the threshold.
+> Re-bucketing is free: scores are stored, so changing it costs no LLM calls.
 
 ---
 
@@ -180,11 +188,35 @@ careers page and read the URL:
 | `jobs.ashbyhq.com/SLUG` | `ashby:` |
 
 <details>
+<summary><b>Five public feeds</b> — already on, nothing to configure</summary>
+
+Remotive, RemoteOK, Arbeitnow, Jobicy and Himalayas are global feeds rather
+than company boards: no key, no slug, nothing in `companies.yaml`. They run on
+every `make ingest` and contribute ~410 rows.
+
+They are remote- and Western-skewed, so treat them as widening the funnel
+rather than as a primary source. Measured on one run, Jobicy had the best hit
+rate and RemoteOK returned nothing usable at all — the postings were genuinely
+off-target ("Gardener", "Equipment Maintenance"), not a broken adapter. It is
+kept anyway, because the prefilter discards a bad feed for free. **Adding a
+weak feed costs ingest time, never quota.**
+</details>
+
+<details>
 <summary><b>Adzuna</b> — optional, 1000 free calls/month, covers the India market</summary>
 
 Register at [developer.adzuna.com](https://developer.adzuna.com), put the app id
-and key in `.env`. Adzuna returns snippets rather than full JDs, so its scores
-are weighted down automatically.
+and key in `.env`.
+
+One call per entry in `targets.titles`, so 23 titles is 23 of your 1000 monthly
+calls per run — fine daily, worth counting before you add more. Descriptions are
+truncated to ~500 characters and **that is permanent**: the API hands back an
+`adzuna.*/land/ad/…` redirect page rather than the employer's URL, and that page
+refuses a plain GET, so `jdfetch` cannot enrich them. Scores are weighted down
+to compensate.
+
+If you are searching in India, this is the source that matters — 96% of its rows
+came back India-located, against a handful from the ATS boards.
 </details>
 
 <details>
@@ -193,11 +225,18 @@ are weighted down automatically.
 1. [console.cloud.google.com](https://console.cloud.google.com) → new project → enable the Gmail API
 2. Credentials → OAuth client ID → **Desktop app** → download the JSON
 3. Save it as `data/gmail_credentials.json`
-4. Set up saved-search alerts on LinkedIn and Naukri, set to daily email
+4. Set up saved-search alerts on LinkedIn, Naukri, Indeed or Glassdoor, daily email
 5. First run opens a browser once for consent
 
 The scope is **read-only**. You configure the searches on their site; they email
-you; jobpipe reads your own inbox. Zero account activity on either platform.
+you; jobpipe reads your own inbox. Zero account activity on any platform.
+
+**Set up Naukri first.** Its postings can be fetched, so those rows get a full
+job description. LinkedIn, Indeed and Glassdoor cannot — LinkedIn's robots.txt
+disallows `/jobs/view/`, and the other two serve a login wall to a plain GET.
+Those rows keep whatever blurb the email carried and nothing more, so the
+keyword prefilter stands aside for them rather than killing a row for having a
+title it could not read.
 </details>
 
 <details>
@@ -268,7 +307,7 @@ See [`deploy/VERCEL.md`](deploy/VERCEL.md).
 
 | | |
 |---|---|
-| Gemini | free tier — ~15 RPM, 1500 RPD, budget-capped to 1200 |
+| Gemini | free tier — **500 requests/day per model**, 10 RPM |
 | ATS APIs | public, no key, no quota |
 | Adzuna | free tier, 1000 calls/month |
 | Gmail API | free, read-only scope |
@@ -280,6 +319,23 @@ A daily budget counter persists to disk behind a file lock, so a runaway retry
 loop can't burn the quota at 3am and leave you with nothing at 9am. The rate
 limiter and the counter are shared across processes — the scheduler and a manual
 run can overlap without doubling your real request rate.
+
+Two things about that quota are easy to get wrong, and both were learned the
+expensive way:
+
+- **It is per model, not per project.** `MODEL_SCORE` and `MODEL_TAILOR` each
+  get their own 500/day, so the counter tracks them separately. A single shared
+  counter meant a long `score` run locked out `prepare` for no reason.
+- **It resets at midnight America/Los_Angeles**, whatever your timezone. In IST
+  that is 12:30 — the middle of the working day. A run at 11:00 is on the
+  previous quota day and may have nothing left; 13:00 is a fresh 500. The
+  counter rolls on the Pacific date so it agrees with Google rather than with
+  your laptop.
+
+**Only ever point `MODEL_*` at a `-latest` alias.** A pinned version such as
+`gemini-3.6-flash` reports a free-tier quota of **20 requests a day** — enough
+for six prepared applications. The aliases are the only names carrying the full
+free quota.
 
 ---
 
@@ -304,6 +360,7 @@ scripts/doctor.py         preflight: key, tier, models, config, integrations
 src/jobpipe/
   llm.py                  Gemini over raw REST — rate limit, budget, PII redaction
   sources/                greenhouse · lever · ashby · adzuna · gmail alerts
+                          remotive · remoteok · arbeitnow · jobicy · himalayas
   normalize.py            canonicalisation, fingerprinting, fuzzy dedup
   jdfetch.py              descriptions for postings that arrive without one
   score.py                free prefilter → LLM scoring
@@ -320,7 +377,7 @@ deploy/                   OCI setup, crontab, cloudflared example
 rapidfuzz · Docker Compose · Cloudflare Tunnel
 
 ```bash
-make test          # 42 tests
+make test          # 91 tests
 ```
 
 ---
