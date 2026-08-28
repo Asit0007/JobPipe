@@ -127,3 +127,82 @@ def test_concurrent_processes_lose_no_increments(tmp_path):
     expected = (n_procs // 2) * per_proc          # 3 processes per model
     assert state["models"][A]["count"] == expected
     assert state["models"][B]["count"] == expected
+
+
+# --- 7.28: the counter must roll on Google's day, not the machine's ----------
+
+@pytest.mark.skipif(not hasattr(__import__("time"), "tzset"), reason="POSIX only")
+def test_quota_day_ignores_the_machine_timezone():
+    """The discriminating test, and it has to be built carefully.
+
+    Comparing _quota_day() against the Pacific date proves nothing for the
+    hours when the local date happens to agree -- IST and Pacific share a date
+    from 12:30 to 23:59 IST, so a naive date.today() passes such a test for
+    half the day. Instead, evaluate it under two zones whose local dates can
+    NEVER agree: UTC+14 and UTC-12 are 26 hours apart. A timezone-independent
+    answer is equal under both; date.today() cannot be.
+    """
+    import os
+    import time
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    original = os.environ.get("TZ")
+    try:
+        seen = []
+        for tz in ("Etc/GMT-14", "Etc/GMT+12"):     # UTC+14, UTC-12
+            os.environ["TZ"] = tz
+            time.tzset()
+            seen.append((llm._quota_day(), datetime.now().date().isoformat()))
+
+        (quota_a, local_a), (quota_b, local_b) = seen
+        assert local_a != local_b, "the two zones must straddle a date boundary"
+        assert quota_a == quota_b, "quota day must not follow the machine clock"
+        assert quota_a == datetime.now(ZoneInfo("America/Los_Angeles")).date().isoformat()
+    finally:
+        if original is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original
+        time.tzset()
+
+
+def test_quota_day_falls_back_without_a_tz_database(budget, monkeypatch):
+    """python:*-slim ships no /usr/share/zoneinfo. Degrade, do not crash."""
+    import builtins
+    real_import = builtins.__import__
+
+    def no_zoneinfo(name, *a, **k):
+        if name == "zoneinfo":
+            raise ModuleNotFoundError("no tzdata")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_zoneinfo)
+    day = llm._quota_day()
+    monkeypatch.undo()
+
+    from datetime import datetime, timedelta, timezone
+    # PST, never PDT: rolling late under-allows; rolling early spends into a 429.
+    assert day == datetime.now(timezone(timedelta(hours=-8))).date().isoformat()
+
+
+def test_the_counter_resets_when_the_pacific_day_turns(budget, monkeypatch):
+    monkeypatch.setattr(llm, "_quota_day", lambda: "2026-08-28")
+    llm._reserve_slot(A)
+    llm._reserve_slot(A)
+    assert llm.budget_remaining(A) == 1
+
+    monkeypatch.setattr(llm, "_quota_day", lambda: "2026-08-29")
+    assert llm.budget_remaining(A) == 3      # fresh quota day
+    llm._reserve_slot(A)
+    assert llm.budget_remaining(A) == 2
+
+
+def test_state_written_under_one_quota_day_is_ignored_by_the_next(budget, monkeypatch):
+    monkeypatch.setattr(llm, "_quota_day", lambda: "2026-08-28")
+    llm._reserve_slot(A)
+    monkeypatch.setattr(llm, "_quota_day", lambda: "2026-08-29")
+    llm._reserve_slot(A)
+    state = json.loads(budget.read_text())
+    assert state["date"] == "2026-08-29"
+    assert state["models"][A]["count"] == 1

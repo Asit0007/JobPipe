@@ -8,3 +8,7 @@ uvicorn>=0.30
 google-api-python-client>=2.140
 google-auth-oauthlib>=1.2
 rich>=13.7
+
+# zoneinfo needs an IANA database. python:*-slim ships none, and the LLM
+# budget counter rolls on midnight America/Los_Angeles -- see llm._quota_day.
+tzdata>=2024.1

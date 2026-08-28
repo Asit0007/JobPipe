@@ -23,7 +23,7 @@ import random
 import re
 import time
 from contextlib import contextmanager
-from datetime import date
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -35,6 +35,40 @@ BUDGET_FILE = DATA_DIR / "gemini_budget.json"
 
 class QuotaExhausted(RuntimeError):
     pass
+
+
+# --------------------------------------------------------------------------
+# Whose midnight?
+# --------------------------------------------------------------------------
+# Google's free-tier quota rolls at midnight America/Los_Angeles. In IST that
+# is 12:30 -- the middle of this user's working day, not the middle of the
+# night. A counter rolling on the LOCAL date therefore shadows a different
+# window than the quota it exists to track, for half of every day.
+#
+# Measured 2026-08-28: ~946 flash-lite calls got through a documented 500/day
+# cap without the counter noticing, because the session straddled 12:30 IST and
+# was really two quota days. The counter was not wrong about its own arithmetic
+# -- it was counting the wrong day.
+PACIFIC = "America/Los_Angeles"
+
+
+def _quota_day() -> str:
+    """Today's date in Google's quota timezone, as an ISO string."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo(PACIFIC)).date().isoformat()
+    except Exception:
+        # python:*-slim carries no /usr/share/zoneinfo. The `tzdata` package in
+        # requirements.txt covers that, and zoneinfo falls back to it
+        # automatically -- but if even that is absent, degrade rather than
+        # crash the whole client over a date.
+        #
+        # -8 (PST) deliberately, never -7. During DST the real boundary is -7,
+        # so a fixed -8 rolls our day an hour LATE: the counter keeps counting
+        # after Google has reset, which under-allows. The opposite error would
+        # reset us early and spend into a 429.
+        return datetime.now(timezone(timedelta(hours=-8))).date().isoformat()
 
 
 # --------------------------------------------------------------------------
@@ -97,7 +131,7 @@ def _locked_state():
             state = json.loads(raw) if raw.strip() else {}
         except json.JSONDecodeError:
             state = {}
-        today = date.today().isoformat()
+        today = _quota_day()
         # A file from before the per-model split has {"count", "stamps"} at the
         # top level and no way to say which model spent them. It is discarded
         # rather than guessed at: the counter is a courtesy guard, Google
@@ -178,7 +212,7 @@ def _today_models() -> dict:
         state = json.loads(STATE_FILE.read_text() or "{}")
     except json.JSONDecodeError:
         return {}
-    if state.get("date") != date.today().isoformat():
+    if state.get("date") != _quota_day():
         return {}
     return state.get("models") or {}
 
