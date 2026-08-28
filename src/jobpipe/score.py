@@ -83,6 +83,21 @@ def _hard_reject_hit(term: str, blob: str) -> bool:
     return False
 
 
+def _is_alert_without_jd(job) -> bool:
+    """An email-alert row that jdfetch could not fill in.
+
+    Both halves matter. `alert:` alone is not enough -- once jdfetch has
+    fetched the posting page the row has a real JD and should face the normal
+    keyword gate like anything else. Only the rows still holding nothing get
+    the carve-out.
+    """
+    try:
+        source = job["source"] or ""
+    except (KeyError, IndexError):
+        return False
+    return source.startswith("alert:") and not (job["description"] or "").strip()
+
+
 def prefilter(job) -> tuple[bool, int, str]:
     p = profile()
     title = (job["title"] or "").lower()
@@ -102,6 +117,28 @@ def prefilter(job) -> tuple[bool, int, str]:
             return False, 0, f"hard reject: {term}"
 
     hits = sum(1 for kw in p["must_have_any"] if kw.lower() in blob)
+
+    # A job-alert row that arrived with no description has only its title to
+    # count keywords in, and a title almost never carries two of them. Measured
+    # on the 4,654-row corpus with descriptions stripped: "DevOps Engineer"
+    # scores 0 hits and "AWS Cloud Engineer" scores 1 -- both killed, silently,
+    # for free. That is bug 7.2 coming back through a different door, and it
+    # would have thrown away the entire LinkedIn/Indeed/Naukri channel.
+    #
+    # The keyword count exists to protect the LLM budget from thousands of ATS
+    # rows. It is the wrong instrument here: an alert row is already role-
+    # filtered by the user on the platform, and alerts arrive at tens per day,
+    # not thousands. title_reject and hard_reject still apply -- those are the
+    # filters that keep genuinely wrong roles out.
+    #
+    # A title-match against targets.titles was measured as the alternative and
+    # REJECTED: it kept only 3-5 of the 17 rows that scored >= 45, because real
+    # titles ("Staff Engineer DevOps, Data Security (DLP)") do not look like
+    # anything on a hand-written list. Failing open costs one LLM call; failing
+    # closed loses the job silently, and silence is the expensive direction.
+    if _is_alert_without_jd(job):
+        return True, hits, f"alert row, no JD -- keyword gate skipped ({hits} hit(s))"
+
     if hits < p["thresholds"]["keyword_prefilter_min"]:
         return False, hits, f"only {hits} must-have keyword(s)"
     return True, hits, "passed"

@@ -42,7 +42,7 @@ MAX_LINK_DISTANCE = 2000
 
 PROMPT = """Extract every distinct job posting from this job-alert email.
 
-Return JSON: {{"jobs":[{{"title":"...","company":"...","location":"..."}}]}}
+Return JSON: {{"jobs":[{{"title":"...","company":"...","location":"...","snippet":"..."}}]}}
 
 Rules:
 - One entry per posting. Do not invent postings that are not present.
@@ -50,6 +50,12 @@ Rules:
   It is used to locate the posting's link, so a paraphrase breaks the match.
 - If a field is absent, use an empty string. Do not guess.
 - Ignore promotional content, footers, and "jobs you may be interested in" upsells.
+- "snippet" is whatever description, blurb, requirement list or skill tags the
+  email shows for THAT posting. Copy it VERBATIM from the email. Do not
+  summarise it, do not tidy it up, and do not write one from the job title --
+  this text is scored as if it were the job description, so an invented
+  snippet produces an invented score. If the email shows no description for a
+  posting, return "" and let the posting page supply it later.
 
 EMAIL:
 {body}
@@ -124,7 +130,15 @@ def fetch(log=print) -> list[dict]:
                 title=j["title"],
                 location=j.get("location", ""),
                 url=url,
-                description="",   # jdfetch fills this in before scoring
+                # Whatever blurb the email carried. Usually short and often
+                # empty -- LinkedIn and Indeed give a line or two, Naukri gives
+                # skill tags. It is provisional: jdfetch still re-fetches
+                # anything under MIN_USEFUL_CHARS and overwrites this with the
+                # real posting page, and upsert_job backfills over an empty
+                # one. Storing it costs nothing and, for the boards jdfetch
+                # cannot reach (LinkedIn, Indeed, Glassdoor), it is the only
+                # description the row will ever have.
+                description=(j.get("snippet") or "").strip(),
             ))
 
     log(f"  gmail_alert: {len(jobs)} from {len(msgs)} emails"
