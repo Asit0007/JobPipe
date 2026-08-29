@@ -34,3 +34,12 @@ venv/
 .idea/
 .vscode/
 *.swp
+
+# OAuth client secrets. data/ is already ignored, but Google's download lands
+# in ~/Downloads under this name and it gets copied to the repo root by hand --
+# which happened on 2026-08-29 and was one `git add .` away from a public repo.
+# Belt and braces: match the name anywhere in the tree.
+client_secret*.json
+*apps.googleusercontent.com.json
+gmail_credentials.json
+gmail_token.json
