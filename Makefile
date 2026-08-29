@@ -46,6 +46,12 @@ track:       ## parse Gmail for replies, update statuses, flag follow-ups
 status:      ## pipeline counts + remaining LLM budget
 	$(CLI) status
 
+gmail-auth:  ## one-time Gmail OAuth consent, then verify the token works
+	$(PY) scripts/gmail_auth.py
+
+telegram-check: ## verify TELEGRAM_BOT_TOKEN/CHAT_ID actually deliver a message
+	$(PY) scripts/telegram_check.py
+
 review:      ## local review dashboard on 127.0.0.1:8080
 	# Loopback only. Compose already does this; the Makefile used to expose
 	# your review queue -- and your work history -- to the whole LAN.
