@@ -18,24 +18,36 @@ from __future__ import annotations
 
 import re
 
-from ..config import MODEL_SCORE
+from ..config import MODEL_SCORE, env
 from ..llm import generate_json
 from .base import make_job
 
-# Exact sender addresses where they are known and stable. Glassdoor is matched
-# at the DOMAIN instead: its alert sender was never observed in this mailbox, and
-# a wrong exact address fails silently -- you get no mail and no error, which is
-# the worst way for a source to be broken. `from:domain` also survives Glassdoor
-# moving between subdomains. Tighten it to the real address once one arrives.
-QUERY = (
+# Match on the DOMAIN, not on individual From addresses. The boards send from
+# whatever subdomain they like and change it without telling anyone: measured
+# 2026-08-29, Indeed's alerts arrive from `donotreply@jobalert.indeed.com` and
+# `donotreply@match.indeed.com`, while the two addresses previously listed here
+# (`alert@` and `noreply@indeed.com`) matched **nothing at all**. That silently
+# lost 21 of the 55 alert emails in a 3-day window.
+#
+# Checked against the user's hand-curated "Job Notifications" label, which is
+# the ground truth for what an alert is: the domain-only form returns exactly
+# those 55 -- nothing missed, nothing extra.
+#
+# Broad on purpose. A non-alert email that slips in costs one LLM call that
+# finds no jobs; a missed sender loses the postings in silence. Same trade the
+# alert prefilter carve-out makes in CLAUDE.md 3.
+DEFAULT_QUERY = (
     'newer_than:3d ('
-    'from:jobalerts-noreply@linkedin.com OR '
-    'from:jobs-listings@linkedin.com OR '
-    'from:info@naukri.com OR from:alerts@naukri.com OR '
-    'from:alert@indeed.com OR from:noreply@indeed.com OR '
-    'from:glassdoor.com OR from:glassdoor.co.in'
+    'from:linkedin.com OR from:naukri.com OR '
+    'from:indeed.com OR from:glassdoor.com OR from:glassdoor.co.in'
     ')'
 )
+
+# Override in .env when you file alerts under a label -- a hand-maintained
+# label beats any sender list, because you curate it and the boards cannot
+# break it by changing a subdomain. Quote it if the name has a space:
+#   GMAIL_ALERT_QUERY=label:"Job Notifications" newer_than:3d
+QUERY = env("GMAIL_ALERT_QUERY", DEFAULT_QUERY)
 
 LINK_RE = re.compile(r'https?://[^\s"\'<>)]+', re.I)
 # Matched against a LOWERCASED url -- keep every hint lowercase. Glassdoor's

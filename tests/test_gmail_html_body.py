@@ -98,3 +98,34 @@ def test_hint_list_is_all_lowercase():
 
 def test_a_non_posting_link_is_still_ignored():
     assert _job_links("Title https://www.glassdoor.co.in/about-us") == []
+
+
+# --- the alert search query -------------------------------------------------
+
+def test_query_matches_domains_not_individual_senders():
+    """Measured 2026-08-29: Indeed's alerts arrive from
+    `donotreply@jobalert.indeed.com` and `donotreply@match.indeed.com`, while
+    the addresses the query used to list (`alert@` / `noreply@indeed.com`)
+    matched nothing at all -- 21 of 55 alert emails lost in silence. Boards
+    change subdomains without notice, so match the domain."""
+    from jobpipe.sources.gmail_alerts import DEFAULT_QUERY
+    for domain in ("linkedin.com", "naukri.com", "indeed.com", "glassdoor.com"):
+        assert f"from:{domain}" in DEFAULT_QUERY, f"{domain} must match at the domain"
+    # An address-scoped sender would re-introduce the bug.
+    for addr in ("alert@indeed.com", "noreply@indeed.com",
+                 "info@naukri.com", "jobalerts-noreply@linkedin.com"):
+        assert addr not in DEFAULT_QUERY, f"{addr} is too narrow to rely on"
+
+
+def test_query_is_overridable_from_env(monkeypatch):
+    """A hand-curated label beats any sender list: the user maintains it and no
+    board can break it by changing a subdomain."""
+    import importlib
+    from jobpipe.sources import gmail_alerts
+    monkeypatch.setenv("GMAIL_ALERT_QUERY", 'label:"Job Notifications" newer_than:3d')
+    reloaded = importlib.reload(gmail_alerts)
+    try:
+        assert reloaded.QUERY == 'label:"Job Notifications" newer_than:3d'
+    finally:
+        monkeypatch.undo()
+        importlib.reload(gmail_alerts)
