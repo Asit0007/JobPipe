@@ -262,9 +262,17 @@ title it could not read.
 <details>
 <summary><b>Telegram</b> — optional, for the daily queue</summary>
 
-[@BotFather](https://t.me/botfather) → `/newbot` → token into `.env`.
-[@userinfobot](https://t.me/userinfobot) for your chat id. Without it, the queue
-prints to stdout.
+1. [@BotFather](https://t.me/botfather) → `/newbot` → token into `.env` as
+   `TELEGRAM_BOT_TOKEN`
+2. **Send your new bot a message** (`/start`). A bot cannot message you until
+   you have messaged it first, so this step is not optional.
+3. `make telegram-check PY=./.venv/bin/python` — validates the token and prints
+   your chat id from `getUpdates`, so you do not need a third-party bot for it.
+4. Put it in `TELEGRAM_CHAT_ID`, re-run, and it sends a real test message.
+
+Without a chat id the queue just prints to stdout. Note that an **empty** value
+in `.env` reads as "configured" to a careless grep — check the value, not the
+key.
 </details>
 
 ### 5. Run it
