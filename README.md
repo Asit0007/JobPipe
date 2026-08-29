@@ -222,11 +222,31 @@ came back India-located, against a handful from the ATS boards.
 <details>
 <summary><b>Gmail</b> — optional, and the only way LinkedIn and Naukri get in</summary>
 
-1. [console.cloud.google.com](https://console.cloud.google.com) → new project → enable the Gmail API
-2. Credentials → OAuth client ID → **Desktop app** → download the JSON
-3. Save it as `data/gmail_credentials.json`
-4. Set up saved-search alerts on LinkedIn, Naukri, Indeed or Glassdoor, daily email
-5. First run opens a browser once for consent
+Google moved this. The old "APIs & Services → OAuth consent screen" path no
+longer exists; consent now lives under **Google Auth Platform**.
+
+1. **Enable the API** — [console.cloud.google.com/apis/enableflow;apiid=gmail.googleapis.com](https://console.cloud.google.com/apis/enableflow;apiid=gmail.googleapis.com)
+   → pick or create a project → **Enable**. (Nothing else on this list is
+   reachable until the API is enabled, which is why it comes first.)
+2. **Branding** — [console.cloud.google.com/auth/branding](https://console.cloud.google.com/auth/branding)
+   → app name, your own address as support email and contact → Create.
+3. **Audience** — [console.cloud.google.com/auth/audience](https://console.cloud.google.com/auth/audience)
+   → **External**. *Internal* only appears for Google Workspace organisations,
+   so a personal `@gmail.com` account cannot pick it.
+4. **Publish it.** On that same Audience page, press **Publish app** to move it
+   out of *Testing*. **In Testing, refresh tokens expire after 7 days** — the
+   daily cron would silently stop ingesting alerts every week. Publishing an
+   unverified app is fine here: you are the only user, and consent shows a
+   "Google hasn't verified this app" screen you clear once via
+   **Advanced → Go to … (unsafe)**. Verification is only needed to hand the app
+   to strangers.
+5. **Clients** — [console.cloud.google.com/auth/clients](https://console.cloud.google.com/auth/clients)
+   → Create client → **Desktop app** → Create → download the JSON.
+6. Save it as `data/gmail_credentials.json`
+7. `make gmail-auth PY=./.venv/bin/python` — one browser consent, then it
+   confirms which mailbox it authorised.
+8. Set up saved-search alerts on Naukri, LinkedIn, Indeed or Glassdoor, daily
+   email. **Naukri first** — see below.
 
 The scope is **read-only**. You configure the searches on their site; they email
 you; jobpipe reads your own inbox. Zero account activity on any platform.
