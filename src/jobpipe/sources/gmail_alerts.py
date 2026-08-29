@@ -38,10 +38,16 @@ QUERY = (
 )
 
 LINK_RE = re.compile(r'https?://[^\s"\'<>)]+', re.I)
+# Matched against a LOWERCASED url -- keep every hint lowercase. Glassdoor's
+# real link is `glassdoor.co.in/partner/jobListing.htm`, with a capital L, and
+# the list previously carried only the lowercase `.com` spelling: wrong case and
+# wrong TLD, so every Glassdoor link was skipped. The ccTLD is the same trap
+# that 17c15aa fixed for SKIP_HOSTS.
 JOB_LINK_HINTS = ("linkedin.com/jobs/view", "naukri.com/job-listings", "indeed.com/rc/clk",
                   "indeed.com/viewjob", "linkedin.com/comm/jobs/view",
                   "glassdoor.com/job-listing", "glassdoor.co.in/job-listing",
-                  "glassdoor.com/partner/joblisting")
+                  "glassdoor.com/partner/joblisting",
+                  "glassdoor.co.in/partner/joblisting")
 
 # How far from a title a link may sit and still be considered its link. Anchor
 # markup puts the href just before the visible text, so the window is asymmetric
@@ -73,7 +79,7 @@ EMAIL:
 def _job_links(text: str) -> list[tuple[int, str]]:
     """Every posting link, with where it sits in the text. Order preserved."""
     return [(m.start(), m.group(0)) for m in LINK_RE.finditer(text)
-            if any(h in m.group(0) for h in JOB_LINK_HINTS)]
+            if any(h in m.group(0).lower() for h in JOB_LINK_HINTS)]
 
 
 def _match_link(title: str, text: str, links: list[tuple[int, str]],
@@ -106,9 +112,11 @@ def fetch(log=print) -> list[dict]:
         if not text:
             continue
         sender = headers(msg).get("from", "")
-        board = ("linkedin" if "linkedin" in sender else
-                 "naukri" if "naukri" in sender else
-                 "indeed" if "indeed" in sender else "email")
+        sender_l = sender.lower()
+        board = ("linkedin" if "linkedin" in sender_l else
+                 "naukri" if "naukri" in sender_l else
+                 "indeed" if "indeed" in sender_l else
+                 "glassdoor" if "glassdoor" in sender_l else "email")
 
         links = _job_links(text)
 
