@@ -30,6 +30,10 @@ def budget(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "STATE_FILE", f)
     monkeypatch.setenv("GEMINI_RPM", "10000")
     monkeypatch.setenv("GEMINI_RPD_BUDGET", "3")
+    # B carries a real measured cap of 20 (7.33), which would otherwise swamp
+    # the small numbers these tests use. Override it the documented way, which
+    # exercises the GEMINI_RPD_BUDGET_<model> path at the same time.
+    monkeypatch.setenv(f"GEMINI_RPD_BUDGET_{B}", "3")
     return f
 
 
@@ -45,6 +49,40 @@ def test_models_do_not_share_a_daily_budget(budget):
     llm._reserve_slot(B)
     assert llm.budget_remaining(A) == 0
     assert llm.budget_remaining(B) == 2
+
+
+def test_the_cap_is_per_model_not_just_the_counter(tmp_path, monkeypatch):
+    """7.33. 7.26 split the COUNTER per model but left the CAP global, so
+    `cli status` reported 481 calls left on a model Google had already cut off
+    at 20. A counter that promises headroom the API has refused is worse than
+    no counter, because it is trusted.
+    """
+    monkeypatch.setattr(llm, "STATE_FILE", tmp_path / "budget.json")
+    monkeypatch.setenv("GEMINI_RPM", "10000")
+    monkeypatch.setenv("GEMINI_RPD_BUDGET", "500")
+
+    # gemini-flash-latest resolves to gemini-3.7-flash, measured at 20/day.
+    assert llm.budget_remaining(B) == 20, "must not inherit the 500 default"
+    assert llm.budget_remaining(A) == 500, "flash-lite keeps the large default"
+
+    for _ in range(20):
+        llm._reserve_slot(B)
+    with pytest.raises(llm.QuotaExhausted):
+        llm._reserve_slot(B)
+
+    # The status line must now say 0 for B, not 480.
+    assert llm.budget_by_model()[B] == 0
+    assert llm.budget_remaining(A) == 500      # A is untouched
+
+
+def test_an_explicit_per_model_override_beats_the_measured_default(tmp_path, monkeypatch):
+    """If Google raises the quota, .env must be able to say so without a code
+    change -- and without editing DEFAULT_MODEL_CAPS."""
+    monkeypatch.setattr(llm, "STATE_FILE", tmp_path / "budget.json")
+    monkeypatch.setenv("GEMINI_RPM", "10000")
+    monkeypatch.setenv("GEMINI_RPD_BUDGET", "500")
+    monkeypatch.setenv(f"GEMINI_RPD_BUDGET_{B}", "50")
+    assert llm.budget_remaining(B) == 50
 
 
 def test_budget_by_model_reports_each(budget):
@@ -115,7 +153,8 @@ def test_concurrent_processes_lose_no_increments(tmp_path):
     child = tmp_path / "child.py"
     child.write_text(CHILD.format(src=src))
 
-    env = {**os.environ, "GEMINI_RPM": "100000", "GEMINI_RPD_BUDGET": "100000"}
+    env = {**os.environ, "GEMINI_RPM": "100000", "GEMINI_RPD_BUDGET": "100000",
+           f"GEMINI_RPD_BUDGET_{B}": "100000"}
     n_procs, per_proc = 6, 60
     procs = [subprocess.Popen([sys.executable, str(child), str(f),
                                A if i % 2 == 0 else B, str(per_proc)], env=env)

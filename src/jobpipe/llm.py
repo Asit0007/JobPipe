@@ -161,10 +161,35 @@ def _bucket(state: dict, model: str) -> dict:
     return b
 
 
-def _cap() -> int:
-    # 500, measured -- see CLAUDE.md 6. The old default of 1200 was fiction and
-    # let the counter report headroom that Google had already refused.
-    return int(env("GEMINI_RPD_BUDGET", "500"))
+# Google's free daily quota is per project PER MODEL, and the models do NOT all
+# get the same number. Measured 2026-08-29 from the 429 body, which is the only
+# place the real figure appears:
+#
+#   gemini-flash-latest  -> resolves to gemini-3.7-flash, quotaValue: 20
+#   gemini-flash-lite-latest             90 calls in one run, no 429
+#
+# 7.26 split the COUNTER per model but left the CAP a single global number, so
+# `cli status` cheerfully reported "481 left" on a model Google had already
+# cut off at 20. That is bug 7.28's failure returning through a different
+# door -- a counter that promises headroom the API has refused is worse than
+# no counter, because it is trusted.
+#
+# Override per model with GEMINI_RPD_BUDGET_<model>, e.g.
+#   GEMINI_RPD_BUDGET_gemini-flash-latest=20
+# and GEMINI_RPD_BUDGET stays the default for anything unlisted.
+DEFAULT_MODEL_CAPS = {
+    "gemini-flash-latest": 20,
+}
+
+
+def _cap(model: str | None = None) -> int:
+    default = int(env("GEMINI_RPD_BUDGET", "500"))
+    if model is None:
+        return default
+    override = env(f"GEMINI_RPD_BUDGET_{model}", "")
+    if override:
+        return int(override)
+    return DEFAULT_MODEL_CAPS.get(model, default)
 
 
 def _reserve_slot(model: str) -> None:
@@ -185,7 +210,7 @@ def _reserve_slot(model: str) -> None:
     processes are not held up behind us.
     """
     rpm = int(env("GEMINI_RPM", "10"))
-    cap = _cap()
+    cap = _cap(model)
 
     while True:
         with _locked_state() as state:
@@ -223,18 +248,22 @@ def budget_remaining(model: str | None = None) -> int:
     No argument answers "how many more calls am I sure of", which is what a
     status line wants -- so it reports the most-spent model, not a total.
     """
-    cap, models = _cap(), _today_models()
+    models = _today_models()
     if model is not None:
-        return max(cap - (models.get(model) or {}).get("count", 0), 0)
+        return max(_cap(model) - (models.get(model) or {}).get("count", 0), 0)
     if not models:
-        return cap
-    return max(cap - max((b or {}).get("count", 0) for b in models.values()), 0)
+        return _cap()
+    # Each model has its own cap now, so the tightest is computed per model
+    # rather than by finding the largest count against one shared number.
+    return min(
+        max(_cap(name) - (b or {}).get("count", 0), 0)
+        for name, b in models.items()
+    )
 
 
 def budget_by_model() -> dict[str, int]:
     """Calls left today, per model that has been used. Empty before the first call."""
-    cap = _cap()
-    return {m: max(cap - (b or {}).get("count", 0), 0)
+    return {m: max(_cap(m) - (b or {}).get("count", 0), 0)
             for m, b in sorted(_today_models().items())}
 
 
@@ -249,6 +278,24 @@ def budget_by_model() -> dict[str, int]:
 # non-thinking model and is no longer a safe ceiling for anything structured.
 # (thinkingConfig.thinkingBudget=0 is not accepted by this model -- HTTP 400.)
 MAX_OUTPUT_TOKENS = 8192
+
+# 90s was too tight and it cost a whole `prepare` run on 2026-08-29: every one
+# of the 15 jobs failed, 5 budget slots burned per job, zero documents written.
+# Measured on the real tailor prompt (10,687 chars, 46-fact menu):
+#
+#   gemini-flash-latest       HTTP 200 in  50.3s  (1,251 thinking tokens)
+#   gemini-flash-lite-latest  HTTP 200 in   2.6s  (no thinking)
+#
+# A thinking model spends most of that time before the first byte arrives, so
+# this is a READ timeout with nothing streaming to reset it. 50s nominal under
+# a 90s ceiling leaves under 2x headroom, and Google's latency is not stable to
+# 2x -- see the flakiness note in CLAUDE.md 6. 240s is ~5x the observed cost of
+# the slowest call in the pipeline.
+#
+# Do NOT "fix" a timeout here by lowering max_output_tokens: 7.21 established
+# that reasoning tokens are charged against that same ceiling, and cutting it
+# truncates the JSON instead.
+REQUEST_TIMEOUT = float(env("GEMINI_TIMEOUT", "240"))
 
 
 def generate(prompt: str, *, model: str, json_out: bool = True,
@@ -271,14 +318,23 @@ def generate(prompt: str, *, model: str, json_out: bool = True,
     url = ENDPOINT.format(model=model)
     delay = 2.0
 
+    # What actually went wrong on each attempt. The old code threw this away and
+    # ended with a flat "rate limited", which is a lie when the cause was a
+    # timeout or a 503 -- and it sent a whole session chasing a quota problem
+    # that did not exist. Same species as 7.22: a wrong diagnostic costs more
+    # than no diagnostic.
+    failures: list[str] = []
+
     for attempt in range(max_retries):
         # Reserved per ATTEMPT, not per call: a retry is a real request that
         # Google counts, so the budget must count it too. A bad retry loop can
         # therefore eat the day -- that is the intended, visible behaviour.
         _reserve_slot(model)
         try:
-            r = httpx.post(url, params={"key": key}, json=payload, timeout=90)
+            r = httpx.post(url, params={"key": key}, json=payload,
+                           timeout=REQUEST_TIMEOUT)
         except httpx.RequestError as e:
+            failures.append(f"{type(e).__name__}")
             if attempt == max_retries - 1:
                 raise
             time.sleep(delay + random.uniform(0, 1))
@@ -287,12 +343,14 @@ def generate(prompt: str, *, model: str, json_out: bool = True,
 
         if r.status_code == 429:
             # Exponential backoff WITH jitter. Immediate retry makes it worse.
+            failures.append("429")
             sleep_for = delay + random.uniform(0, delay / 2)
             time.sleep(sleep_for)
             delay = min(delay * 2, 60)
             continue
 
         if r.status_code >= 500:
+            failures.append(str(r.status_code))
             time.sleep(delay + random.uniform(0, 1))
             delay *= 2
             continue
@@ -316,7 +374,11 @@ def generate(prompt: str, *, model: str, json_out: bool = True,
                 f"ceiling={max_output_tokens}). Raise max_output_tokens.")
         return text
 
-    raise QuotaExhausted("Exhausted retries against Gemini (rate limited).")
+    seen = ", ".join(failures) or "no attempts recorded"
+    raise QuotaExhausted(
+        f"Exhausted {max_retries} retries against {model} [{seen}]. "
+        f"429 = quota or rate limit; 5xx = Google-side; ReadTimeout = the call "
+        f"took longer than GEMINI_TIMEOUT ({REQUEST_TIMEOUT:.0f}s).")
 
 
 def generate_json(prompt: str, *, model: str, temperature: float = 0.2,

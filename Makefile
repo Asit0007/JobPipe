@@ -49,7 +49,7 @@ status:      ## pipeline counts + remaining LLM budget
 review:      ## local review dashboard on 127.0.0.1:8080
 	# Loopback only. Compose already does this; the Makefile used to expose
 	# your review queue -- and your work history -- to the whole LAN.
-	uvicorn jobpipe.review_api:app --host 127.0.0.1 --port 8080
+	$(PY) -m uvicorn jobpipe.review_api:app --host 127.0.0.1 --port 8080
 
 test:        ## run the test suite
 	$(PY) -m pytest tests/ -q
