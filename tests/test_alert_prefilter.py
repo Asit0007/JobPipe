@@ -14,6 +14,7 @@ Measured on the 4,654-row corpus with descriptions stripped, 2026-08-28:
 The alternative -- gating on a title match against targets.titles -- was
 measured and rejected: it kept 3 to 5 of the 17 rows that scored >= 45.
 """
+from jobpipe.jdfetch import MIN_USEFUL_CHARS
 from jobpipe.score import prefilter
 
 
@@ -39,17 +40,39 @@ def test_the_same_row_from_an_ats_board_is_still_killed():
     assert "must-have keyword" in why
 
 
-def test_alert_row_WITH_a_description_faces_the_normal_gate():
-    """Once jdfetch has filled the row in, it is an ordinary posting."""
-    ok, _, _ = prefilter(_job(
-        title="DevOps Engineer", source="alert:naukri",
-        description="Wordpress and Photoshop work for a design studio."))
-    assert not ok, "a filled-in alert row must not keep the carve-out"
+def test_alert_row_with_a_REAL_jd_faces_the_normal_gate():
+    """Once jdfetch has filled the row in, it is an ordinary posting.
 
+    "Filled in" means >= jdfetch.MIN_USEFUL_CHARS, not merely non-empty --
+    see the fragment test below for why that distinction cost 86 jobs.
+    """
+    pad = " Wordpress and Photoshop work for a design studio." * 20
+    assert len(pad) >= MIN_USEFUL_CHARS
+    ok, _, _ = prefilter(_job(
+        title="DevOps Engineer", source="alert:naukri", description=pad))
+    assert not ok, "a genuinely filled-in alert row must not keep the carve-out"
+
+    real = "You will run Kubernetes on AWS with Terraform. " * 12
+    assert len(real) >= MIN_USEFUL_CHARS
     ok, hits, _ = prefilter(_job(
-        title="DevOps Engineer", source="alert:naukri",
-        description="You will run Kubernetes on AWS with Terraform."))
+        title="DevOps Engineer", source="alert:naukri", description=real))
     assert ok and hits >= 2
+
+
+def test_a_short_email_SNIPPET_does_not_defeat_the_carve_out():
+    """The regression. Bug 7.24 taught the extractor to keep the email's blurb,
+    so alert rows stopped being blank and started carrying a ~120-char
+    fragment. That is not a JD -- it is too short to hold two must-have
+    keywords -- so the row failed the gate it had just become eligible for.
+    Measured on the live corpus: 86 of 105 alert rows holding a fragment died
+    on the keyword count, with titles like "Senior DevOps Engineer".
+    7.25 returning through the door 7.24 opened."""
+    snippet = "Mentor junior engineers and conduct technical design reviews."
+    assert 0 < len(snippet) < MIN_USEFUL_CHARS
+    ok, _, why = prefilter(_job(
+        title="Senior DevOps Engineer", source="alert:indeed", description=snippet))
+    assert ok, f"a fragment must not be mistaken for a JD: {why}"
+    assert "keyword gate skipped" in why
 
 
 def test_carve_out_does_not_bypass_the_safety_filters():

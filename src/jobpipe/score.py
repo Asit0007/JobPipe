@@ -84,18 +84,35 @@ def _hard_reject_hit(term: str, blob: str) -> bool:
 
 
 def _is_alert_without_jd(job) -> bool:
-    """An email-alert row that jdfetch could not fill in.
+    """An email-alert row that has no usable job description.
 
-    Both halves matter. `alert:` alone is not enough -- once jdfetch has
+    Both halves still matter. `alert:` alone is not enough -- once jdfetch has
     fetched the posting page the row has a real JD and should face the normal
-    keyword gate like anything else. Only the rows still holding nothing get
-    the carve-out.
+    keyword gate like anything else.
+
+    But "has a description" is NOT the same as "is non-empty", and reading it
+    that way cost 86 jobs on 2026-08-29. Bug 7.24 taught the extractor to keep
+    the email's blurb, so alert rows stopped being blank and started carrying a
+    ~120-character fragment -- "Mentor junior DevOps engineers and conduct
+    technical design reviews." That is not a JD. It is too short to hold two
+    must-have keywords, so the row failed the gate it had just become eligible
+    for. Measured on the live corpus: of 105 alert rows holding a fragment,
+    **86 died on the keyword count**, and they were titles like "Senior DevOps
+    Engineer" and "Lead Cloud Engineer - DevOps / SecOps". Meanwhile all 26
+    genuinely blank rows sailed through the carve-out and 12 of them
+    shortlisted. **7.25 returning through the door 7.24 opened.**
+
+    So the threshold is `jdfetch.MIN_USEFUL_CHARS`, the number jdfetch already uses to
+    decide a description is not worth having. One definition of "usable", used
+    by both modules.
     """
     try:
         source = job["source"] or ""
     except (KeyError, IndexError):
         return False
-    return source.startswith("alert:") and not (job["description"] or "").strip()
+    if not source.startswith("alert:"):
+        return False
+    return len((job["description"] or "").strip()) < jdfetch.MIN_USEFUL_CHARS
 
 
 def prefilter(job) -> tuple[bool, int, str]:
