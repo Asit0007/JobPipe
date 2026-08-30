@@ -1,4 +1,4 @@
-.PHONY: help install config doctor verify ingest fetch-jd score prepare notify track review status test all
+.PHONY: help install config doctor verify ingest fetch-jd score prepare tex pdf claims notify track review status test all
 
 PY ?= python3
 CLI := $(PY) -m jobpipe.cli
@@ -36,6 +36,15 @@ score:       ## keyword prefilter, then LLM score on survivors
 
 prepare:     ## tailor resume + screening answers for shortlisted jobs
 	$(CLI) prepare
+
+tex:         ## rebuild .tex from prepared docs (no LLM call) -- `make tex JOB=56`
+	$(CLI) tex $(or $(JOB),all)
+
+pdf:         ## compile prepared .tex to PDF -- `make pdf JOB=56`
+	$(CLI) pdf $(or $(JOB),all)
+
+claims:      ## show what the never_claim gate matches on
+	$(CLI) claims
 
 notify:      ## push today's review queue to Telegram
 	$(CLI) notify

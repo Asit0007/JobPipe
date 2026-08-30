@@ -106,6 +106,136 @@ def cmd_screening():
     print(screening.render(screening.generate_for(job)))
 
 
+def cmd_tex():
+    """Rebuild the .tex (and .json) for prepared jobs. `cli tex [job_id|all]`
+
+    Costs nothing: the payload is stored beside the markdown, so this never
+    calls a model. Documents prepared before the sidecar existed are recovered
+    from the markdown itself, and the job description is re-read from the DB so
+    the skill rows can still be ordered against the JD.
+    """
+    from . import render
+    target = sys.argv[2] if len(sys.argv) > 2 else "all"
+    docs = render.documents(target)
+    if not docs:
+        print(f"no prepared documents matching {target!r} in out/")
+        return
+    from . import tailor
+    for md in docs:
+        doc = render.load(md)
+        _refresh_job(doc)
+        if not doc.get("bullets"):
+            print(f"  ! {md.name}: no sourceable bullets, skipped")
+            continue
+
+        # Re-run the gate against the CURRENT rules. A fix to claims.py should
+        # reach documents already on disk without spending 2 of the tailor
+        # model's 20 daily calls to re-tailor them.
+        unsourced = (doc.get("flags") or {}).get("unsourced")
+        doc["bullets"], doc["flags"] = render.gate(doc["bullets"], doc)
+        if unsourced:
+            doc["flags"]["unsourced"] = unsourced
+
+        render.write_sidecar(doc, md)
+        tex = render.write_tex(doc, md)
+        md.write_text(tailor._render(doc["job"], doc, doc["bullets"], [],
+                                     doc.get("screening"), doc["flags"]))
+        flags = doc["flags"]
+        bits = []
+        if flags.get("dropped"):
+            bits.append(f"{len(flags['dropped'])} dropped")
+        if flags.get("drift"):
+            bits.append(f"{len(flags['drift'])} to check")
+        if flags.get("prose"):
+            bits.append(f"prose: {flags['prose'][0]['field']}")
+        if unsourced:
+            bits.append(f"{len(unsourced)} unsourced")
+        note = f"  ({', '.join(bits)})" if bits else ""
+        print(f"  {tex.name}  {len(doc['bullets'])} bullets{note}")
+    print(f"\n{len(docs)} document(s). Compile with: make pdf")
+
+
+def cmd_pdf():
+    """Compile prepared .tex files to PDF. `cli pdf [job_id|all]`"""
+    from . import render
+    engine = render.find_engine()
+    if not engine:
+        print("no TeX engine found on PATH.\n"
+              "  brew install tectonic     # single binary, fetches only what it needs\n"
+              "  brew install --cask mactex-no-gui   # the full distribution, ~5 GB\n"
+              "Until then the .tex files are ready to compile anywhere, "
+              "including overleaf.com.")
+        sys.exit(1)
+
+    target = sys.argv[2] if len(sys.argv) > 2 else "all"
+    docs = render.documents(target)
+    made, failed = 0, 0
+    for md in docs:
+        tex = md.with_suffix(".tex")
+        if not tex.exists():
+            print(f"  ! {tex.name} missing -- run `cli tex` first")
+            failed += 1
+            continue
+        ok, detail, pages = render.compile_pdf(tex, engine)
+        if not ok:
+            print(f"  ! {tex.name}: {detail}")
+            failed += 1
+            continue
+        # The template's checklist asks for one page. The engine already counted,
+        # so answer it rather than leaving a box to eyeball.
+        # Two pages is the expected shape now that the skill rows carry the
+        # master resume's full inventory. Three is a signal to cut.
+        note = "" if pages in (None, 1) else f"  ({pages} pages)"
+        if pages and pages > 2:
+            note += "  <- over two pages, trim"
+        print(f"  {tex.with_suffix('.pdf').name}{note}")
+        made += 1
+    print(f"\n{made} PDF(s) written by {engine}" + (f", {failed} failed" if failed else ""))
+    if failed:
+        sys.exit(1)
+
+
+def _refresh_job(doc: dict) -> None:
+    """Put the live job row back on a payload recovered from markdown.
+
+    The description is what orders the skill rows and picks the tagline
+    keywords, and the markdown never carried it.
+    """
+    job_id = (doc.get("job") or {}).get("id")
+    if not job_id:
+        return
+    with db.connect() as c:
+        row = c.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    if row:
+        doc["job"].update({k: row[k] for k in row.keys() if k in doc["job"] and row[k]})
+
+
+def cmd_claims():
+    """Show what the never_claim gate is actually looking for.
+
+    The rules in facts.yaml are prose, so the terms are extracted heuristically.
+    Read this before trusting the gate -- if a rule is not producing the term
+    you meant, reword it in facts.yaml.
+    """
+    from .claims import never_claim_terms, tech_vocab
+    from .config import facts
+    cfg = facts()
+    by_rule: dict[str, list[str]] = {}
+    for term, rule in never_claim_terms(cfg):
+        by_rule.setdefault(rule, []).append(term)
+    print("never_claim -- a bullet introducing one of these is DROPPED\n")
+    for rule, terms in by_rule.items():
+        print(f"  {rule[:88]}")
+        print(f"      -> {', '.join(terms)}")
+    silent = [r for r in (cfg.get("never_claim") or []) if r not in by_rule]
+    if silent:
+        print(f"\n{len(silent)} rule(s) produced NO term and are not enforced:")
+        for r in silent:
+            print(f"  - {r[:88]}")
+    print(f"\ndrift vocabulary -- introducing one of these is FLAGGED, not dropped\n"
+          f"  {', '.join(tech_vocab(cfg))}")
+
+
 def cmd_notify():
     from .notify import run
     run()
