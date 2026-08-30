@@ -155,6 +155,44 @@ def cmd_tex():
     print(f"\n{len(docs)} document(s). Compile with: make pdf")
 
 
+def cmd_rescreen():
+    """Refresh screening answers on prepared docs. `cli rescreen [job_id|all]`
+
+    Costs ONE call per job, against the two that re-running `prepare` would
+    spend -- and it leaves the tailored bullets alone, so a document already
+    reviewed stays valid. Use it when facts.yaml gains a fact the answers should
+    reflect, which is what happened when the work-authorisation fact landed and
+    every prepared document was still saying "my candidate profile does not
+    specify my work authorization status".
+    """
+    from . import render, screening, tailor
+    target = sys.argv[2] if len(sys.argv) > 2 else "all"
+    docs = render.documents(target)
+    if not docs:
+        print(f"no prepared documents matching {target!r} in out/")
+        return
+    done = 0
+    for md in docs:
+        doc = render.load(md)
+        _refresh_job(doc)
+        try:
+            doc["screening"] = screening.generate_for(doc["job"])
+        except Exception as e:
+            print(f"  ! {md.name}: {type(e).__name__}: {str(e)[:90]}")
+            break
+        doc["bullets"], doc["flags"] = render.gate(doc["bullets"], doc)
+        render.write_sidecar(doc, md)
+        render.write_tex(doc, md)
+        md.write_text(tailor._render(doc["job"], doc, doc["bullets"], [],
+                                     doc["screening"], doc["flags"]))
+        weak = sum(1 for a in (doc["screening"].get("answers") or [])
+                   if a.get("confidence") == "low")
+        print(f"  {md.stem}  {len(doc['screening'].get('answers') or [])} answers"
+              + (f", {weak} still weak" if weak else ""))
+        done += 1
+    print(f"\n{done} document(s) refreshed")
+
+
 def cmd_pdf():
     """Compile prepared .tex files to PDF. `cli pdf [job_id|all]`"""
     from . import render
