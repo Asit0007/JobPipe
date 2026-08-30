@@ -7,6 +7,8 @@ config/profile.yaml
 config/facts.yaml
 # private working memory: names the employer and the job-hunt itself
 CLAUDE.md
+# resume strategy: phone number, employer, designation history, salary
+RESUME_PLAYBOOK.md
 .env
 data/
 out/
