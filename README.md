@@ -121,6 +121,42 @@ That friction is the feature. `facts.yaml` is also schema-validated on load — 
 typo'd ID or a missing `verified` key fails loudly instead of silently dropping
 the fact.
 
+### The other half: `never_claim`
+
+The ID gate stops the model *inventing* a fact. It cannot stop it *rephrasing a
+real fact into a claim you cannot defend* — which is the failure actually
+observed here. So `facts.yaml` carries a second list:
+
+```yaml
+never_claim:
+  - "Kubernetes in production - CKA planned, not yet hands-on"
+  - "Redis or MySQL in QuantBot - it uses flat files, no database at all"
+```
+
+`claims.py` reads it as a **drift check, not a word list**: a term counts only if
+the rewrite contains it *and the source fact does not*. That distinction is what
+makes it precise with no special cases — "Redis" is forbidden as a QuantBot claim
+while appearing legitimately in a different project's fact text, and comparing
+against the source tells the two apart on its own.
+
+### `skill_rows` — the keyword surface
+
+The Technical Skills block is the densest keyword real estate on a resume, and it
+is not model-written. It comes from `facts.yaml`, ordered against the JD:
+
+```yaml
+skill_rows:
+  - label: "Infrastructure as Code"
+    match: [terraform, iac, cloud-init, provisioning, yaml]
+    text: "Terraform, end-to-end provisioning and lifecycle management across
+           four cloud providers including networking, compute, IAM and security
+           groups; cloud-init bootstrap; YAML, JSON"
+```
+
+`match` drives ordering — rows the JD asks for come first. An optional `use_when`
+gates a row on JD terms, the way certifications already work. Write these once,
+as prose you would defend; the generator never paraphrases them.
+
 ### Questions it refuses to answer for you
 
 Notice period, current CTC, expected CTC, relocation, reason for leaving.
@@ -280,12 +316,50 @@ key.
 ```bash
 make ingest      # pull every source, normalize, dedup
 make score       # free prefilter, then LLM on the survivors
-make prepare     # tailored bullets + screening answers
+make prepare     # tailored bullets + screening answers -> .md, .tex, .json
+make pdf         # compile the .tex to PDF
 make notify      # push the day's shortlist to Telegram
 make review      # dashboard on 127.0.0.1:8080
 ```
 
 Or `make all`. `make status` shows pipeline counts and remaining quota.
+
+### Resume output
+
+`prepare` writes three files per job into `out/`, and they do different jobs:
+
+| file | for |
+|---|---|
+| `.md` | **auditing.** Every bullet carries `from Fxxx:` with the original fact text underneath. A PDF cannot show that, and it is how you catch a rewrite that drifted. |
+| `.tex` | **sending.** Carries the provenance map, the never_claim flags, a pre-send checklist and a block of automated checks as comments. |
+| `.json` | the validated payload, so the `.tex` can be rebuilt without spending an LLM call. |
+
+```bash
+make tex          # rebuild every .tex from the stored payload -- free, offline
+make tex JOB=56   # just one
+make pdf JOB=56   # compile it
+make claims       # show exactly what the never_claim gate matches on
+```
+
+PDF needs a TeX engine. `brew install tectonic` is the light option — one
+binary that fetches only the packages a document uses. `make pdf` reports the
+page count and warns past two.
+
+**What the `.tex` checks for you.** Resume advice is mostly rules nobody verifies.
+These are verified, and reported in the file:
+
+| check | why |
+|---|---|
+| a rewrite that introduces a **technology** its source fact does not name | the only drift this project has observed: a Windows fact came back as "Windows **and Linux** servers" |
+| a rewrite that introduces a **number** its source fact does not state | an "L1/L2 on-call" fact came back as "**24/7** on-call support" — a shift pattern nobody wrote down |
+| a `never_claim` term the rewrite introduced | dropped outright, not flagged |
+| personal pronouns | found "**I have** hands-on experience…" in a document about to be sent |
+| a missing teamwork signal | scanners look for collaboration language; 3 of 9 documents had none |
+| summary word count against the 70–90 band | 9 of 9 documents were 33–49 words |
+| page count | read out of the TeX engine's own log |
+
+`make claims` prints exactly what the gate matches on, per rule — the terms are
+extracted heuristically from prose, so they are worth auditing rather than trusting.
 
 ---
 
@@ -382,6 +456,7 @@ free quota.
 ```
 config/profile.yaml       search definition, three reject lists, thresholds
 config/facts.yaml         the verified-fact menu — the anti-hallucination boundary
+                          also: skill_rows, never_claim, blockers, per-project use_when
 config/companies.yaml     ATS slugs (the part you maintain by hand)
 scripts/doctor.py         preflight: key, tier, models, config, integrations
 
