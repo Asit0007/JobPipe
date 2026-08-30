@@ -166,11 +166,27 @@ def cmd_site():
     It publishes the entire job hunt and adds no authentication. Put the
     hostname behind Cloudflare Access before the first visit.
     """
+    import getpass
+    import os
+
     from . import site
-    out = site.build()
-    print(f"\n  Deploy (data never touches git):")
+
+    # Network-edge auth cannot cover the *.vercel.app domain Vercel assigns and
+    # will not remove on Hobby, nor a GitHub Pages URL. Encrypting the payload
+    # makes the host irrelevant instead of trusting it.
+    pw = os.getenv("JOBPIPE_SITE_PASSPHRASE") or ""
+    if not pw and sys.stdin.isatty():
+        pw = getpass.getpass("Passphrase to encrypt the export (blank = local only): ")
+        if pw and pw != getpass.getpass("Confirm: "):
+            print("  passphrases did not match")
+            sys.exit(1)
+    out = site.build(passphrase=pw or None)
+    if not pw:
+        return
+    print("\n  Deploy (the data never enters git, and the host only sees ciphertext):")
     print(f"     cd {out} && vercel --prod")
-    print(f"  Then point jobpipe.<yourdomain> at it and add a Cloudflare Access policy.")
+    print("  Keep the passphrase in a password manager. Losing it means re-exporting,")
+    print("  not recovering -- there is no reset.")
 
 
 def cmd_rescreen():

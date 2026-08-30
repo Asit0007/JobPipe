@@ -12,7 +12,32 @@ noindex markers must be present.
 """
 import json
 
+import pytest
+
 from jobpipe import site
+
+
+def test_the_rewritten_script_is_syntactically_intact():
+    """The click handler was first removed with a non-greedy regex, which stopped
+    at the FIRST `});` -- inside the handler, on the fetch line -- and orphaned
+    its tail. That emits a SyntaxError and a blank page, while every assertion
+    about "/api/" still passed, because the fetch line did go. Structure has to
+    be checked directly."""
+    body = site._rewrite(_TEMPLATE, "x").split("<script>", 1)[1].split("</script>", 1)[0]
+    for o, c in (("{", "}"), ("(", ")"), ("[", "]")):
+        assert body.count(o) == body.count(c), f"unbalanced {o}{c}"
+    real = site._rewrite((site.TEMPLATE_DIR / "dashboard.html").read_text(), "x")
+    rbody = real.split("<script>", 1)[1].split("</script>", 1)[0]
+    for o, c in (("{", "}"), ("(", ")"), ("[", "]")):
+        assert rbody.count(o) == rbody.count(c), f"real template unbalanced {o}{c}"
+
+
+def test_a_template_whose_handler_changed_shape_fails_loudly():
+    """Better a build error than a blank page on a phone."""
+    # Reformat the handler's terminator so the exact anchor no longer matches.
+    broken = _TEMPLATE.replace("\n});\n\nload();", "\n} ) ;\n\nload();")
+    with pytest.raises(RuntimeError, match="unbalanced|click handler"):
+        site._rewrite(broken, "x")
 
 
 def test_the_write_actions_are_removed():
@@ -30,9 +55,8 @@ def test_the_apply_link_survives():
     assert "Open posting" in site._rewrite(_TEMPLATE, "x")
 
 
-def test_the_fetches_point_at_flat_json():
+def test_the_page_no_longer_calls_the_live_api():
     html = site._rewrite(_TEMPLATE, "x")
-    assert "fetch('queue.json')" in html and "fetch('stats.json')" in html
     assert "/api/" not in html
 
 
@@ -55,12 +79,74 @@ def test_search_engines_are_told_to_stay_out():
 
 
 def test_build_writes_every_file_a_host_needs(tmp_path):
-    out = site.build(log=lambda *a: None, out_dir=tmp_path)
-    for name in ("index.html", "queue.json", "stats.json", "robots.txt",
-                 "vercel.json", ".nojekyll"):
+    out = site.build(log=lambda *a: None, out_dir=tmp_path, passphrase="pw")
+    for name in ("index.html", "payload.enc", "robots.txt", "vercel.json", ".nojekyll"):
         assert (out / name).exists(), f"{name} missing"
-    json.loads((out / "queue.json").read_text())
+    json.loads((out / "payload.enc").read_text())
     json.loads((out / "vercel.json").read_text())
+
+
+# --------------------------------------------------------------------------
+# encryption -- what makes the host irrelevant
+# --------------------------------------------------------------------------
+def test_the_payload_is_encrypted_at_rest(tmp_path):
+    """Cloudflare Access covers the proxied hostname. It cannot cover the
+    *.vercel.app domain Vercel assigns and will not remove on Hobby, and a
+    GitHub Pages URL is public regardless of repo visibility. Encrypting the
+    payload is what makes a public URL harmless."""
+    out = site.build(log=lambda *a: None, out_dir=tmp_path, passphrase="s3cret")
+    blob = (out / "payload.enc").read_text()
+    assert "resume" not in blob.lower() and "company" not in blob.lower()
+    env = json.loads(blob)
+    assert set(env) == {"v", "kdf", "iter", "salt", "iv", "ct"}
+    assert env["iter"] >= 600_000, "below the OWASP floor for PBKDF2-SHA256"
+
+
+def test_encryption_round_trips_and_rejects_a_wrong_passphrase():
+    import base64
+    import hashlib
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    env = site.encrypt('{"x":1}', "right")
+    d = lambda k: base64.b64decode(env[k])                       # noqa: E731
+    key = hashlib.pbkdf2_hmac("sha256", b"right", d("salt"), env["iter"], 32)
+    assert AESGCM(key).decrypt(d("iv"), d("ct"), None) == b'{"x":1}'
+
+    bad = hashlib.pbkdf2_hmac("sha256", b"wrong", d("salt"), env["iter"], 32)
+    with pytest.raises(Exception):
+        AESGCM(bad).decrypt(d("iv"), d("ct"), None)
+
+
+def test_each_export_uses_a_fresh_salt_and_iv():
+    """Reusing a GCM nonce across exports of overlapping data is a real break,
+    not a theoretical one."""
+    a, b = site.encrypt("x", "pw"), site.encrypt("x", "pw")
+    assert a["salt"] != b["salt"] and a["iv"] != b["iv"] and a["ct"] != b["ct"]
+
+
+def test_without_a_passphrase_the_plaintext_file_is_named_so_nobody_hosts_it(tmp_path):
+    out = site.build(log=lambda *a: None, out_dir=tmp_path)
+    assert (out / "UNENCRYPTED-DO-NOT-HOST.json").exists()
+    assert not (out / "payload.enc").exists()
+
+
+def test_switching_to_a_passphrase_removes_the_plaintext(tmp_path):
+    """A stale plaintext file left beside the ciphertext would be the whole
+    point defeated, and it would be invisible."""
+    site.build(log=lambda *a: None, out_dir=tmp_path)
+    site.build(log=lambda *a: None, out_dir=tmp_path, passphrase="pw")
+    assert not (tmp_path / "UNENCRYPTED-DO-NOT-HOST.json").exists()
+    assert not (tmp_path / "queue.json").exists()
+
+
+def test_the_unlock_gate_is_wired_into_the_page():
+    html = site._rewrite(_TEMPLATE, "x")
+    assert "id=\"lock\"" in html and "unlock()" in html
+    assert "PBKDF2" in html and "AES-GCM" in html
+    assert "fetch('payload.enc'" in html
+    assert "sessionStorage.setItem" in html
+    assert "localStorage.setItem" not in html, "must not persist past the tab"
 
 
 def test_the_export_never_lands_inside_the_repo_history():
