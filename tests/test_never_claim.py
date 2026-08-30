@@ -56,7 +56,7 @@ CFG = {
         "Prometheus or Grafana ANYWHERE - never implemented in any project",
         "CloudPulse on ECS Fargate or ECR - it runs on EC2 with images from Docker Hub",
         "Azure AD / Entra ID / RBAC operational administration - SME-held",
-        "VMware provisioning, snapshots, templates, golden images - tutorial familiarity",
+        "VMware provisioning, snapshots, templates, golden images, VDI pools, ESXi host admin - tutorial familiarity",
         "Magento_DeployKit as idempotent, production-grade, or a working one-shot install",
         "CloudPulse Vault as Terraform-provisioned - it is manual out-of-band SSH setup",
     ],
@@ -246,6 +246,18 @@ def test_a_gap_statement_may_name_the_technology_it_lacks():
     _, flags = gate([{"id": "F007", "original": CFG["roles"][0]["facts"][1]["text"],
                       "text": CFG["roles"][0]["facts"][1]["text"]}], out, CFG)
     assert not flags.get("prose")
+
+
+def test_a_product_named_before_an_activity_is_not_forbidden_on_its_own():
+    """"ESXi host admin" bans administering ESXi hosts. It does not ban reading
+    ESXi telemetry during incident triage, which is real day-to-day work -- and
+    the bare term fired on exactly that line in the master resume. The full
+    phrase still matches, which is the actual claim."""
+    terms = _terms()
+    assert "ESXi" not in terms
+    assert "ESXi host admin" in terms
+    # A phrase NOT ending in an activity noun still contributes its head.
+    assert "VDI" in terms
 
 
 def test_a_bare_participle_is_not_a_forbidden_term():

@@ -64,6 +64,14 @@ _TOO_GENERIC = {
 # "Exchange" -- QuantBot talks to a crypto exchange -- and "SQL Server" must not
 # contribute "SQL", which is what you write against MySQL. In every one of these
 # the full two-word term still matches, which is the actual product anyway.
+# "<Product> <activity>" forbids the activity performed on that product, not the
+# product. "ESXi host admin" bans administering ESXi hosts -- it does not ban
+# reading ESXi telemetry during incident triage, which is real work. So when a
+# phrase ends in one of these, the head token is not emitted on its own; the
+# full phrase still is.
+_ACTIVITY_TAIL = ("admin", "administration", "provisioning", "management",
+                  "ops", "operations", "engineering", "development")
+
 _NOT_A_HEAD = {
     "the", "a", "an", "any", "all", "every", "some", "no",
     "new", "exchange", "control", "sql", "open", "active", "data", "core",
@@ -152,7 +160,7 @@ def _emit(text: str, banned: frozenset[str], tokens: frozenset[str],
             own_word = len(words) == 2 and words[1].lower() in tokens
             if _termish(rest) and not own_word and any(c.isupper() or c.isdigit() for c in rest):
                 out.append(rest)
-        else:
+        elif not text.lower().endswith(_ACTIVITY_TAIL):
             head = words[0]
             if (head.lower() not in _NOT_A_HEAD and head.lower() not in banned
                     and any(c.isupper() or c.isdigit() for c in head) and _termish(head)):
