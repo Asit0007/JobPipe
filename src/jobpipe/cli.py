@@ -155,6 +155,24 @@ def cmd_tex():
     print(f"\n{len(docs)} document(s). Compile with: make pdf")
 
 
+def cmd_site():
+    """Export the queue as a static site. `cli site`
+
+    For hosting the dashboard on Vercel or GitHub Pages, neither of which can
+    run `review_api.py` -- it needs a server and a writable SQLite file. The
+    export is READ-ONLY by construction: marking applied is a database write and
+    section 2 keeps `review_api.mark_applied` as its only writer.
+
+    It publishes the entire job hunt and adds no authentication. Put the
+    hostname behind Cloudflare Access before the first visit.
+    """
+    from . import site
+    out = site.build()
+    print(f"\n  Deploy (data never touches git):")
+    print(f"     cd {out} && vercel --prod")
+    print(f"  Then point jobpipe.<yourdomain> at it and add a Cloudflare Access policy.")
+
+
 def cmd_rescreen():
     """Refresh screening answers on prepared docs. `cli rescreen [job_id|all]`
 

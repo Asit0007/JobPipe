@@ -1,4 +1,4 @@
-.PHONY: help install config doctor verify ingest fetch-jd score prepare tex pdf rescreen claims notify track review status test all gmail-auth gmail-imap-check telegram-check
+.PHONY: help install config doctor verify ingest fetch-jd score prepare tex pdf rescreen site claims notify track review status test all gmail-auth gmail-imap-check telegram-check
 
 PY ?= python3
 CLI := $(PY) -m jobpipe.cli
@@ -42,6 +42,9 @@ tex:         ## rebuild .tex from prepared docs (no LLM call) -- `make tex JOB=5
 
 pdf:         ## compile prepared .tex to PDF -- `make pdf JOB=56`
 	$(CLI) pdf $(or $(JOB),all)
+
+site:        ## export the queue as a static read-only site for Vercel/Pages
+	$(CLI) site
 
 rescreen:    ## refresh screening answers after a facts.yaml change (1 call/job)
 	$(CLI) rescreen $(or $(JOB),all)

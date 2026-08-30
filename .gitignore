@@ -12,6 +12,8 @@ RESUME_PLAYBOOK.md
 .env
 data/
 out/
+# static export of the review queue -- the whole job hunt in one folder
+site/
 
 # Gmail OAuth
 *gmail_credentials*.json
