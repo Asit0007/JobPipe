@@ -258,29 +258,51 @@ came back India-located, against a handful from the ATS boards.
 <details>
 <summary><b>Gmail</b> — optional, and the only way LinkedIn and Naukri get in</summary>
 
-Google moved this. The old "APIs & Services → OAuth consent screen" path no
-longer exists; consent now lives under **Google Auth Platform**.
+**Use IMAP with an App Password.** It is free, has no expiry, and needs no Cloud
+project:
 
-1. **Enable the API** — [console.cloud.google.com/apis/enableflow;apiid=gmail.googleapis.com](https://console.cloud.google.com/apis/enableflow;apiid=gmail.googleapis.com)
-   → pick or create a project → **Enable**. (Nothing else on this list is
-   reachable until the API is enabled, which is why it comes first.)
-2. **Branding** — [console.cloud.google.com/auth/branding](https://console.cloud.google.com/auth/branding)
-   → app name, your own address as support email and contact → Create.
-3. **Audience** — [console.cloud.google.com/auth/audience](https://console.cloud.google.com/auth/audience)
-   → **External**. *Internal* only appears for Google Workspace organisations,
-   so a personal `@gmail.com` account cannot pick it.
-4. **Publish it.** On that same Audience page, press **Publish app** to move it
-   out of *Testing*. **In Testing, refresh tokens expire after 7 days** — the
-   daily cron would silently stop ingesting alerts every week. Publishing an
-   unverified app is fine here: you are the only user, and consent shows a
-   "Google hasn't verified this app" screen you clear once via
-   **Advanced → Go to … (unsafe)**. Verification is only needed to hand the app
-   to strangers.
-5. **Clients** — [console.cloud.google.com/auth/clients](https://console.cloud.google.com/auth/clients)
-   → Create client → **Desktop app** → Create → download the JSON.
-6. Save it as `data/gmail_credentials.json`
-7. `make gmail-auth PY=./.venv/bin/python` — one browser consent, then it
-   confirms which mailbox it authorised.
+1. **Enable 2-Step Verification** — [myaccount.google.com/security](https://myaccount.google.com/security).
+   App Passwords do not exist until you do.
+2. **Create an App Password** — [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
+   You get 16 characters shown in groups of four.
+3. **Put both in `.env`:**
+   ```
+   GMAIL_ADDRESS=you@gmail.com
+   GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
+   ```
+   The spaces are fine — they are stripped.
+4. `make gmail-imap-check PY=./.venv/bin/python` — checks login, opens the
+   mailbox, runs the real alert query and prints what matched, by sender. A
+   credential that authenticates but matches nothing looks exactly like a
+   working setup until the pipeline reports "0 from 0 emails" and calls it a
+   success.
+
+Queries keep using **Gmail** search syntax — `newer_than:3d`,
+`label:"Job Alerts"`, `-category:promotions` all work. Gmail's IMAP server
+implements `X-GM-RAW`, which takes a raw Gmail search string, so nothing had to
+be translated into RFC 3501 and nothing about matching changed.
+
+<details>
+<summary>Why not the Gmail API?</summary>
+
+`gmail.readonly` is a **restricted** scope. An External OAuth app left in
+*Testing* has its refresh tokens **expired after 7 days**, so a daily cron
+silently stops pulling alerts every week. Neither escape works for a personal
+project:
+
+- **Publishing is not available.** Production for an External app needs a
+  homepage, privacy policy and terms-of-service on a domain verified in Search
+  Console — and for a *restricted* scope, an annual third-party CASA security
+  assessment.
+- **Internal does not help.** It requires a Cloud Organization, and an Internal
+  app can only be consented by accounts inside it — while the mailbox holding
+  the alerts is a personal `@gmail.com`.
+
+The OAuth path still works and is used automatically when `GMAIL_APP_PASSWORD`
+is empty, so an existing token keeps working through the switch. It is not a
+base to build a cron on.
+</details>
+
 8. Set up saved-search alerts on Naukri, LinkedIn, Indeed or Glassdoor, daily
    email. **Naukri first** — see below.
 
@@ -412,7 +434,7 @@ See [`deploy/VERCEL.md`](deploy/VERCEL.md).
 | Gemini | free tier — **500 requests/day per model**, 10 RPM |
 | ATS APIs | public, no key, no quota |
 | Adzuna | free tier, 1000 calls/month |
-| Gmail API | free, read-only scope |
+| Gmail IMAP | free, read-only, App Password (no expiry) |
 | Telegram | free |
 | Hosting | OCI always-free ARM |
 | **total** | **$0** |

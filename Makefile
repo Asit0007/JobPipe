@@ -1,4 +1,4 @@
-.PHONY: help install config doctor verify ingest fetch-jd score prepare tex pdf rescreen claims notify track review status test all
+.PHONY: help install config doctor verify ingest fetch-jd score prepare tex pdf rescreen claims notify track review status test all gmail-auth gmail-imap-check telegram-check
 
 PY ?= python3
 CLI := $(PY) -m jobpipe.cli
@@ -60,6 +60,9 @@ status:      ## pipeline counts + remaining LLM budget
 
 gmail-auth:  ## one-time Gmail OAuth consent, then verify the token works
 	$(PY) scripts/gmail_auth.py
+
+gmail-imap-check: ## verify the Gmail App Password and the alert query (no OAuth)
+	$(PY) scripts/gmail_imap_check.py
 
 telegram-check: ## verify TELEGRAM_BOT_TOKEN/CHAT_ID actually deliver a message
 	$(PY) scripts/telegram_check.py

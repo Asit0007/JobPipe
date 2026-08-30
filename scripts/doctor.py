@@ -262,12 +262,24 @@ def check_optional() -> None:
     adz = bool(os.getenv("ADZUNA_APP_ID") and os.getenv("ADZUNA_APP_KEY"))
     line(OK if adz else WARN, "Adzuna" if adz else "Adzuna not set — ATS sources only")
 
+    # IMAP first: an App Password has no expiry, while `gmail.readonly` is a
+    # restricted scope whose refresh token dies every 7 days in Testing status.
+    # A cron built on the OAuth path stops pulling alerts weekly, in silence.
+    app_pw = (os.getenv("GMAIL_APP_PASSWORD") or "").replace(" ", "").strip()
+    address = (os.getenv("GMAIL_ADDRESS") or "").strip()
     creds = root / (os.getenv("GMAIL_CREDENTIALS_JSON", "data/gmail_credentials.json").lstrip("./"))
     token = root / (os.getenv("GMAIL_TOKEN_JSON", "data/gmail_token.json").lstrip("./"))
-    if token.exists():
-        line(OK, "Gmail authorised")
+    if app_pw and address:
+        line(OK if len(app_pw) == 16 else WARN,
+             "Gmail IMAP (App Password)" if len(app_pw) == 16 else
+             f"Gmail App Password is {len(app_pw)} chars — App Passwords are 16")
+        print("      verify with: make gmail-imap-check")
+    elif token.exists():
+        line(WARN, "Gmail on OAuth — the token expires every 7 days in Testing status")
+        print("      switch to IMAP: https://myaccount.google.com/apppasswords")
+        print("      then set GMAIL_ADDRESS and GMAIL_APP_PASSWORD in .env")
     elif creds.exists():
-        line(WARN, "Gmail credentials present, not yet authorised — first run opens a browser")
+        line(WARN, "Gmail credentials present, not yet authorised — prefer IMAP instead")
     else:
         line(WARN, "Gmail not set — LinkedIn/Naukri alerts will not be ingested")
 

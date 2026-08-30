@@ -416,11 +416,22 @@ def test_an_unsourceable_bullet_is_reported_rather_than_silently_dropped():
     assert doc["flags"]["unsourced"] == ["Something nobody wrote down"]
 
 
-def test_every_skill_in_facts_yaml_lands_in_a_row():
-    """A skill the user adds that no row claims would otherwise vanish. It has
-    to surface somewhere, and the generator has to say so."""
-    known = {s for _, members in latexdoc.SKILL_ROWS for s in members}
-    from jobpipe.config import facts
-    for group in (facts().get("skills") or {}).values():
-        for skill in group or []:
-            assert skill in known, f"{skill!r} is in facts.yaml but no SKILL_ROWS entry claims it"
+def test_a_skill_no_row_claims_still_surfaces():
+    """A skill the user adds that no SKILL_ROWS entry knows about must not
+    vanish -- it has to appear somewhere and the generator has to say so.
+
+    Asserted against a fixture, never against the real config/facts.yaml. CI
+    runs `make config`, which generates the config from the *example* template,
+    so a test that reads the user's private file passes locally and fails in CI
+    for reasons that have nothing to do with the code. tests/test_facts_gate.py
+    already learned this once."""
+    cfg = {**CFG, "skills": {"strong": ["Bash"], "working": [],
+                             "exposure": ["Nonesuch Framework"]}}
+    rows, leftover = skill_rows("nonesuch framework bash", cfg)
+    body = " ".join(items if isinstance(items, str) else " ".join(items)
+                    for _, items in rows) + " " + " ".join(leftover)
+    assert "Nonesuch Framework" in body, "an unclaimed skill disappeared"
+
+    out = render(_doc(description="nonesuch framework bash"), cfg)
+    assert "Nonesuch Framework" in out
+    assert "not in latexdoc.SKILL_ROWS" in out, "the generator should flag it"
