@@ -47,7 +47,11 @@ site:        ## export the queue as an encrypted static site for Vercel/Pages
 	$(CLI) site
 
 deploy:      ## re-export and push to Vercel in one step
-	$(CLI) site && cd site && vercel --prod
+	# The payload.enc test is belt and braces on top of cli site's own exit
+	# code: nothing reaches a public host unless ciphertext is on disk.
+	$(CLI) site
+	@test -s site/payload.enc || { echo "site/payload.enc missing -- refusing to deploy"; exit 2; }
+	cd site && vercel --prod
 
 rescreen:    ## refresh screening answers after a facts.yaml change (1 call/job)
 	$(CLI) rescreen $(or $(JOB),all)

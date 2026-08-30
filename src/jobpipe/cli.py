@@ -182,8 +182,21 @@ def cmd_site():
             sys.exit(1)
     out = site.build(passphrase=pw or None)
     if not pw:
-        return
-    print("\n  Deploy (the data never enters git, and the host only sees ciphertext):")
+        # Exit NON-ZERO. `make deploy` is `cli site && cd site && vercel --prod`,
+        # so returning 0 here let the chain continue and upload the plaintext
+        # payload. Naming the file UNENCRYPTED-DO-NOT-HOST.json was supposed to
+        # be the safeguard; a filename is not a safeguard when the next command
+        # uploads the directory regardless.
+        print("\n  Refusing to continue: no passphrase, so the payload is in the clear.")
+        print("  Re-run and set one, or serve it locally with:")
+        print(f"     cd {out} && python -m http.server 8099")
+        sys.exit(2)
+    enc = out / "payload.enc"
+    if not enc.exists() or enc.stat().st_size < 200:
+        print(f"\n  Build produced no usable {enc.name}. Not safe to deploy.")
+        sys.exit(2)
+    print(f"\n  {enc.name}: {enc.stat().st_size / 1024:.0f} kB of ciphertext")
+    print("  Deploy (the data never enters git, and the host only sees ciphertext):")
     print(f"     cd {out} && vercel --prod")
     print("  Keep the passphrase in a password manager. Losing it means re-exporting,")
     print("  not recovering -- there is no reset.")

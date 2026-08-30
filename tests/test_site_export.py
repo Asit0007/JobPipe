@@ -125,6 +125,23 @@ def test_each_export_uses_a_fresh_salt_and_iv():
     assert a["salt"] != b["salt"] and a["iv"] != b["iv"] and a["ct"] != b["ct"]
 
 
+def test_a_blank_passphrase_exits_non_zero_so_the_deploy_chain_stops(tmp_path, monkeypatch):
+    """`make deploy` is `cli site && cd site && vercel --prod`. Returning 0 on a
+    blank passphrase let the chain continue and upload the PLAINTEXT payload.
+    Naming the file UNENCRYPTED-DO-NOT-HOST.json was meant to be the safeguard;
+    a filename is not a safeguard when the next command uploads the directory
+    regardless."""
+    import sys as _sys
+
+    from jobpipe import cli
+    monkeypatch.setenv("JOBPIPE_SITE_PASSPHRASE", "")
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(site, "SITE_DIR", tmp_path)
+    with pytest.raises(SystemExit) as e:
+        cli.cmd_site()
+    assert e.value.code != 0, "a zero exit here lets vercel upload the plaintext"
+
+
 def test_without_a_passphrase_the_plaintext_file_is_named_so_nobody_hosts_it(tmp_path):
     out = site.build(log=lambda *a: None, out_dir=tmp_path)
     assert (out / "UNENCRYPTED-DO-NOT-HOST.json").exists()
