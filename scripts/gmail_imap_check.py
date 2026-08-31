@@ -38,8 +38,28 @@ def main() -> int:
     # trap already cost a diagnosis once, on TELEGRAM_CHAT_ID.
     pw = raw.replace(" ", "").strip()
     print(f"  address   {address}")
+    # A Google App Password is exactly 16 lowercase letters. Checking only the
+    # LENGTH lets an ordinary account password through -- it is often 16 chars
+    # too -- and the only feedback is a bare AUTHENTICATIONFAILED, which reads
+    # like a typo rather than "you pasted the wrong kind of secret".
+    import re as _re
+    shape_ok = bool(_re.fullmatch(r"[a-z]{16}", pw))
     print(f"  password  {len(pw)} chars"
-          + ("" if len(pw) == 16 else "   <- App Passwords are 16 characters"))
+          + ("" if shape_ok else "   <- NOT an App Password shape"))
+    if not shape_ok:
+        classes = sorted({"digit" if c.isdigit() else "uppercase" if c.isupper()
+                          else "lowercase" if c.islower() else f"symbol {c!r}"
+                          for c in pw})
+        print(f"\n  FAIL  This is not a Google App Password.")
+        print(f"        An App Password is 16 LOWERCASE LETTERS and nothing else.")
+        print(f"        What is in .env contains: {', '.join(classes)}.")
+        print(f"        That looks like an ordinary account password, which Gmail")
+        print(f"        IMAP will always reject -- and which should not sit in a file.\n")
+        print(f"  1. 2-Step Verification must be ON first, or the App Passwords")
+        print(f"     page will not exist: https://myaccount.google.com/security")
+        print(f"  2. Then create one at: https://myaccount.google.com/apppasswords")
+        print(f"  3. Replace GMAIL_APP_PASSWORD in .env with those 16 letters.")
+        return 1
     print(f"  host      {gmail.IMAP_HOST}:{gmail.IMAP_PORT}")
     print(f"  folder    {gmail.IMAP_FOLDER}\n")
 
