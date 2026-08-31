@@ -361,7 +361,30 @@ make tex          # rebuild every .tex from the stored payload -- free, offline
 make tex JOB=56   # just one
 make pdf JOB=56   # compile it
 make claims       # show exactly what the never_claim gate matches on
+make site         # export the queue as an encrypted static site
+make deploy       # re-export and push to a static host
 ```
+
+### Reading the queue away from your desk
+
+`make site` exports the queue for a static host (Vercel, Pages, anywhere). Two
+things about it are deliberate:
+
+**The payload is encrypted, so the host does not matter.** Network-edge auth
+cannot cover the `*.vercel.app` domain a project is assigned automatically,
+which serves the same files and is public; a Pages URL is public regardless of
+repository visibility. So the export is AES-256-GCM under a PBKDF2-SHA256 key at
+600k iterations, decrypted in the browser. The server only ever holds
+ciphertext. Edge auth on top is defence in depth, not the load-bearing lock.
+
+**It is read-only.** Marking applied is a database write and `review_api.py`
+stays its only writer, so those buttons are removed rather than shipped inert.
+Read the queue and the prepared documents anywhere; record the outcome with
+`make review` at your desk.
+
+A blank passphrase exits non-zero and the Makefile checks for ciphertext on disk
+before invoking any deploy — two independent gates, because the earlier
+filename-based safeguard was not one.
 
 PDF needs a TeX engine. `brew install tectonic` is the light option — one
 binary that fetches only the packages a document uses. `make pdf` reports the
