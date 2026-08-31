@@ -155,6 +155,81 @@ def cmd_tex():
     print(f"\n{len(docs)} document(s). Compile with: make pdf")
 
 
+def cmd_readme_stats():
+    """Regenerate the README's funnel table from the live DB. `cli readme-stats`
+
+    The numbers in a README rot the moment the pipeline runs again, and a stale
+    measurement presented as current is the thing this project keeps writing
+    bug-ledger entries about. This makes them reproducible: it re-runs the
+    prefilter over every stored row to bucket the kill reasons, which costs
+    nothing because the prefilter never calls a model.
+
+    PUBLISHES AGGREGATE COUNTS ONLY. No company, title, location or URL, and
+    never `prepared`/`applied` -- the repo is public and those describe the job
+    hunt rather than the tool. See CLAUDE.md section 3.
+    """
+    from collections import Counter
+
+    from .config import ROOT
+    from .score import prefilter
+
+    with db.connect() as c:
+        rows = c.execute("SELECT title, description, company, location, source, "
+                         "status, score FROM jobs").fetchall()
+    if not rows:
+        print("no rows yet -- run `make ingest` first")
+        return
+
+    kills = Counter()
+    reached = 0
+    for r in rows:
+        ok, _, why = prefilter(r)
+        if ok:
+            reached += 1
+        elif why.startswith("title reject"):
+            kills["title"] += 1
+        elif why.startswith("hard reject"):
+            kills["hard"] += 1
+        else:
+            kills["keyword"] += 1
+
+    shortlisted = sum(1 for r in rows if r["status"] == "shortlisted")
+    sources = len({r["source"].split(":")[0] for r in rows})
+    total = len(rows)
+
+    table = [
+        "| stage | count | |",
+        "|---|---:|---|",
+        f"| ingested | **{total:,}** | {sources} sources, deduplicated |",
+        f"| killed on keywords | -{kills['keyword']:,} | fewer than 2 must-haves present |",
+        f"| killed on title | -{kills['title']:,} | sales roles whose JD lists your whole toolchain |",
+        f"| killed on hard rejects | -{kills['hard']:,} | seniority, shift work, geography |",
+        f"| **reach an LLM call** | **{reached:,}** | {reached * 100 // total}% "
+        f"- *this is what protects the free tier* |",
+        f"| shortlisted | **{shortlisted:,}** | above `shortlist_min_score` |",
+        "| **queued for you** | 15/day cap | because volume is not the goal |",
+    ]
+
+    readme = ROOT / "README.md"
+    text = readme.read_text()
+    start, end = "<!-- funnel:start -->", "<!-- funnel:end -->"
+    block = start + "\n" + "\n".join(table) + "\n" + end
+    if start in text and end in text:
+        text = text[:text.index(start)] + block + text[text.index(end) + len(end):]
+    else:
+        # First run: replace the hand-written table in place.
+        import re as _re
+        m = _re.search(r"\| stage \| count \| \|\n(?:\|.*\n)+", text)
+        if not m:
+            print("! could not find the funnel table in README.md; left untouched")
+            return
+        text = text[:m.start()] + block + "\n" + text[m.end():]
+    readme.write_text(text)
+    print("README funnel table updated:")
+    for line in table[2:]:
+        print("  " + line)
+
+
 def cmd_site():
     """Export the queue as a static site. `cli site`
 
@@ -343,13 +418,20 @@ def cmd_status():
     if not rows:
         print("  (empty -- run ingest)")
     # Per model, because the quota is per model: 500/day each, not shared.
+    # Report the cap PER MODEL even before anything is spent. The old zero-state
+    # line read "N per model (none used yet)" using the generic default -- but
+    # gemini-flash-latest allows 20/day, not 500, so a fresh quota day printed a
+    # ceiling 25x too high for the model that actually constrains `prepare`.
+    # That is 7.33's failure surviving in the one path 7.33 did not touch: the
+    # counter was fixed, the number it is printed against was not.
+    from .config import MODEL_SCORE, MODEL_TAILOR
+    from .llm import _cap
     per_model = budget_by_model()
-    if per_model:
-        print("\ngemini calls left today")
-        for name, left in per_model.items():
-            print(f"  {name:<28} {left}")
-    else:
-        print(f"\ngemini calls left today: {budget_remaining()} per model (none used yet)")
+    print("\ngemini calls left today")
+    for name in dict.fromkeys([MODEL_SCORE, MODEL_TAILOR, *per_model]):
+        left = per_model.get(name, _cap(name))
+        used = "" if name in per_model else "  (none used yet)"
+        print(f"  {name:<28} {left} of {_cap(name)}{used}")
 
     stale = profile()["thresholds"].get("stale_after_days")
     if stale:

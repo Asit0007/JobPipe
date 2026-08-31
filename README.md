@@ -69,17 +69,22 @@ flowchart TD
 
 ### The funnel is the product
 
-Measured end to end against 45 ATS boards, five public feeds and Adzuna:
+Measured end to end across every configured source. Regenerate these numbers
+from your own database at any time with `make readme-stats` -- it re-runs the
+prefilter over stored rows and costs nothing, because the prefilter never calls
+a model:
 
+<!-- funnel:start -->
 | stage | count | |
 |---|---:|---|
-| ingested | **5,873** | 9 sources, deduplicated |
-| killed on keywords | −2,102 | fewer than 2 must-haves present |
-| killed on title | −1,926 | sales roles whose JD lists your whole toolchain |
-| killed on hard rejects | −421 | seniority, shift work, geography |
-| **reach an LLM call** | **974** | 17% — *this is what protects the free tier* |
-| shortlisted | **28** | above `shortlist_min_score` |
+| ingested | **7,240** | 10 sources, deduplicated |
+| killed on keywords | -3,113 | fewer than 2 must-haves present |
+| killed on title | -2,230 | sales roles whose JD lists your whole toolchain |
+| killed on hard rejects | -466 | seniority, shift work, geography |
+| **reach an LLM call** | **1,431** | 19% - *this is what protects the free tier* |
+| shortlisted | **127** | above `shortlist_min_score` |
 | **queued for you** | 15/day cap | because volume is not the goal |
+<!-- funnel:end -->
 
 Every row killed above the LLM line costs nothing, and that is the whole design.
 The free tier allows **500 requests per day per model**, so a single unfiltered

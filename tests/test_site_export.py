@@ -204,3 +204,34 @@ def test_the_real_template_still_matches_what_the_rewrite_looks_for():
     real = (site.TEMPLATE_DIR / "dashboard.html").read_text()
     out = site._rewrite(real, "x")
     assert "Mark applied" not in out and "/api/" not in out
+
+
+# --------------------------------------------------------------------------
+# readme-stats -- the README is public, the job hunt is not
+# --------------------------------------------------------------------------
+def test_readme_stats_publishes_counts_and_never_the_job_hunt(tmp_path, monkeypatch, capsys):
+    """CLAUDE.md section 3: the repo is public, the search is not. Aggregate
+    funnel counts are the portfolio value and are already published; company
+    names, titles, locations and the `applied` count describe the job hunt and
+    must never be written into a tracked file."""
+    from jobpipe import cli, db
+
+    readme = tmp_path / "README.md"
+    readme.write_text("intro\n\n| stage | count | |\n|---|---:|---|\n| ingested | 1 | x |\n\ntail\n")
+    monkeypatch.setattr(cli.__dict__["db"], "connect", db.connect)
+    import jobpipe.config as cfg
+    monkeypatch.setattr(cfg, "ROOT", tmp_path)
+
+    db.init()
+    db.upsert_job({"fingerprint": "fp-readme-1", "source": "greenhouse", "source_id": "1",
+                   "company": "Wildly Distinctive Corp", "company_canonical": "wildly",
+                   "title": "Senior Widget Polisher", "location": "Atlantis",
+                   "url": "https://example.invalid/1", "apply_url": "", "description": "widgets",
+                   "salary_raw": "", "posted_at": "", "remote": 0})
+    cli.cmd_readme_stats()
+
+    out = readme.read_text()
+    assert "| ingested |" in out and "funnel:start" in out
+    for secret in ("Wildly Distinctive Corp", "Senior Widget Polisher", "Atlantis",
+                   "example.invalid", "applied"):
+        assert secret not in out, f"{secret!r} reached a tracked file"
