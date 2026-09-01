@@ -77,12 +77,12 @@ a model:
 <!-- funnel:start -->
 | stage | count | |
 |---|---:|---|
-| ingested | **7,240** | 10 sources, deduplicated |
-| killed on keywords | -3,113 | fewer than 2 must-haves present |
-| killed on title | -2,230 | sales roles whose JD lists your whole toolchain |
-| killed on hard rejects | -466 | seniority, shift work, geography |
-| **reach an LLM call** | **1,431** | 19% - *this is what protects the free tier* |
-| shortlisted | **127** | above `shortlist_min_score` |
+| ingested | **7,783** | 10 sources, deduplicated |
+| killed on keywords | -3,343 | fewer than 2 must-haves present |
+| killed on title | -2,364 | sales roles whose JD lists your whole toolchain |
+| killed on hard rejects | -492 | seniority, shift work, geography |
+| **reach an LLM call** | **1,584** | 20% - *this is what protects the free tier* |
+| shortlisted | **138** | above `shortlist_min_score` |
 | **queued for you** | 15/day cap | because volume is not the goal |
 <!-- funnel:end -->
 
@@ -341,15 +341,39 @@ key.
 ### 5. Run it
 
 ```bash
+make daily       # everything below, in order, with the budget handled
+make review      # dashboard on 127.0.0.1:8080 -- you apply from here
+```
+
+`make daily` runs `ingest -> score -> prepare -> pdf -> notify -> track ->
+readme-stats`. Two things it does that running the stages by hand does not:
+
+- **It sizes `prepare` to the tailor model's remaining budget.** `prepare`
+  spends 2 calls per job, and the free tier allows 20 a day on the tailor
+  model, so the default limit of 15 asks for 30 and dies halfway with 429s.
+- **It falls back when the tailor model is unavailable rather than merely
+  busy.** `tailor.run()` returns how many documents it wrote, so "wrote zero
+  with jobs waiting" is distinguishable from "there was nothing to do" -- and
+  only the first triggers a single retry on the model that has quota. Never a
+  loop: every retry is charged against the cap.
+
+A failing stage does not abort the rest, and the summary at the end names what
+broke. Run it **after 12:30 IST** -- Google rolls the free-tier day at midnight
+America/Los_Angeles, so a run started at 11:00 is on the previous quota day.
+
+The stages are still individually available for when something needs redoing:
+
+```bash
 make ingest      # pull every source, normalize, dedup
 make score       # free prefilter, then LLM on the survivors
 make prepare     # tailored bullets + screening answers -> .md, .tex, .json
-make pdf         # compile the .tex to PDF
+make tex         # rebuild .tex from the stored payload -- free, no LLM call
+make pdf         # compile the .tex to PDF -- free
 make notify      # push the day's shortlist to Telegram
-make review      # dashboard on 127.0.0.1:8080
+make status      # pipeline counts and remaining quota
 ```
 
-Or `make all`. `make status` shows pipeline counts and remaining quota.
+`make all` is an alias for `make daily`.
 
 ### Resume output
 

@@ -113,17 +113,26 @@ def _menu() -> tuple[str, dict]:
     return "\n".join(lines), {"allowed": allowed, "blocked": blocked}
 
 
-def run(log=print, limit: int = 15) -> None:
+def run(log=print, limit: int = 15, model: str | None = None) -> int:
+    """Tailor the top `limit` shortlisted jobs. Returns how many were written.
+
+    `model` overrides MODEL_TAILOR for this call. `cli daily` uses it to fall
+    back to flash-lite when the better model is 503ing -- measured 2026-09-01,
+    gemini-flash-latest returned 503 on all five retries and burned a quarter
+    of its 20/day cap producing nothing. Returning the count is what lets the
+    caller tell "the model is sick" from "there was nothing to do".
+    """
     menu, meta = _menu()
     if not meta["allowed"]:
         log("! No verified facts. Open config/facts.yaml and flip `verified: true`")
         log(f"  on the ones you can defend in an interview. {len(meta['blocked'])} are waiting.")
-        return
+        return 0
     if meta["blocked"]:
         log(f"note: {len(meta['blocked'])} unverified facts excluded: {', '.join(meta['blocked'][:8])}")
 
     rows = db.fetch(status="shortlisted", limit=limit)
     log(f"tailoring {len(rows)} shortlisted jobs")
+    written = 0
 
     for job in rows:
         try:
@@ -133,7 +142,7 @@ def run(log=print, limit: int = 15) -> None:
                     description=(job["description"] or "")[:6000],
                     tailor_notes=job["tailor_notes"] or "none",
                 ),
-                model=MODEL_TAILOR, temperature=0.4,
+                model=model or MODEL_TAILOR, temperature=0.4,
             )
         except QuotaExhausted as e:
             log(f"! {e}")
@@ -193,10 +202,11 @@ def run(log=print, limit: int = 15) -> None:
 
         db.update(job["id"], status="prepared", resume_path=str(path),
                   fact_ids_used=json.dumps([k["id"] for k in kept]))
+        written += 1
         log(f"  prepared: {job['company']} - {job['title'][:45]}")
         log(f"    {path.name} (audit) + {tex_path.name} (send)")
 
-    db.log_run("prepare", True)
+    return written
 
 
 def _slug(s: str) -> str:

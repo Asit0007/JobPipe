@@ -413,6 +413,107 @@ def cmd_notify():
     run()
 
 
+# Fallback tailor. Measured 2026-08-30: zero drift flags across 16 documents
+# once the never_claim gate existed, which is what made flash-lite safe here.
+# It is also the only model on this key with a large daily quota (CLAUDE.md 6).
+FALLBACK_TAILOR = "gemini-flash-lite-latest"
+
+
+def cmd_daily():
+    """The whole day's run, in the order the data flows. `cli daily`
+
+    ingest -> score -> prepare -> pdf -> notify -> track.
+
+    Two things this does that running the stages by hand does not, both of
+    which cost a session to learn:
+
+    - **Sizes `prepare` to the tailor model's remaining budget.** `prepare`
+      spends 2 calls per job and MODEL_TAILOR allows 20 a day (7.33), so the
+      default limit of 15 asks for 30 and dies halfway through with 429s.
+    - **Falls back when the tailor model is sick rather than merely busy.**
+      Measured 2026-09-01: gemini-flash-latest returned 503 on all five
+      retries and burned a quarter of its daily cap producing nothing. The
+      rule is "one probe, then fall back" -- doing that by hand means
+      noticing, diagnosing, and re-running.
+
+    A stage that fails does not abort the run; ingest failing still leaves
+    yesterday's shortlist worth preparing, and prepare failing still leaves
+    documents worth compiling. The summary at the end names what broke.
+    """
+    from . import llm
+    from .config import MODEL_TAILOR
+    from .tailor import run as tailor_run
+
+    failed = []
+
+    def stage(name, fn):
+        print(f"\n=== {name} " + "=" * (58 - len(name)))
+        try:
+            return fn()
+        except Exception as e:
+            print(f"  ! {name} failed: {type(e).__name__}: {e}")
+            failed.append(name)
+            return None
+
+    stage("ingest", cmd_ingest)
+    stage("score", cmd_score)
+
+    # --- prepare, budget-sized and with a fallback -------------------------
+    print("\n=== prepare " + "=" * 51)
+    shortlisted = len(db.fetch(status="shortlisted", limit=500))
+    if not shortlisted:
+        print("  nothing shortlisted; skipping")
+    else:
+        left = llm.budget_remaining(MODEL_TAILOR)
+        affordable = left // 2          # tailor call + screening call per job
+        print(f"  {shortlisted} shortlisted; {MODEL_TAILOR} has {left} call(s) "
+              f"left -> room for {affordable} job(s)")
+        written = 0
+        if affordable >= 1:
+            written = stage("prepare", lambda: tailor_run(limit=affordable)) or 0
+        # Zero written with jobs waiting means the model is unavailable, not
+        # that there was nothing to do -- that distinction is why run() returns
+        # a count. Retry once on the model with quota, never in a loop.
+        if written == 0 and MODEL_TAILOR != FALLBACK_TAILOR:
+            fb_left = llm.budget_remaining(FALLBACK_TAILOR)
+            fb_room = min(fb_left // 2, 15)
+            if fb_room >= 1:
+                print(f"  ! {MODEL_TAILOR} produced nothing. Falling back to "
+                      f"{FALLBACK_TAILOR} ({fb_left} left -> {fb_room} job(s))")
+                written = stage("prepare (fallback)",
+                                lambda: tailor_run(limit=fb_room,
+                                                   model=FALLBACK_TAILOR)) or 0
+            else:
+                print(f"  ! no budget left on {FALLBACK_TAILOR} either")
+        print(f"  prepared {written} document(s)")
+
+    # Free: no LLM call. Always worth running -- prepare writes .tex but never
+    # compiles, which is why PDFs went missing on 2026-09-01.
+    stage("pdf", lambda: _pdf_all())
+    stage("notify", cmd_notify)
+    stage("track", cmd_track)
+    # Free, and it keeps the public README honest. A stale measurement
+    # presented as current is the thing this project keeps writing ledger
+    # entries about -- so regenerate it on every run rather than by hand.
+    # Publishes aggregate counts only; never a company, title or `applied`.
+    stage("readme-stats", cmd_readme_stats)
+
+    print("\n=== summary " + "=" * 51)
+    cmd_status()
+    if failed:
+        print(f"\n  stages that failed: {', '.join(failed)}")
+        sys.exit(1)
+
+
+def _pdf_all():
+    argv = sys.argv
+    sys.argv = ["cli", "pdf", "all"]
+    try:
+        cmd_pdf()
+    finally:
+        sys.argv = argv
+
+
 def cmd_track():
     from .track import run
     run()

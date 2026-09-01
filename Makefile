@@ -1,4 +1,4 @@
-.PHONY: help install config doctor verify ingest fetch-jd score prepare tex pdf rescreen site deploy readme-stats claims notify track review status test all gmail-auth gmail-imap-check telegram-check
+.PHONY: help install config doctor verify ingest fetch-jd score daily prepare tex pdf rescreen site deploy verify-deploy readme-stats claims notify track review status test all gmail-auth gmail-imap-check telegram-check
 
 PY ?= python3
 CLI := $(PY) -m jobpipe.cli
@@ -33,6 +33,12 @@ fetch-jd:    ## fill in descriptions for postings that arrived without one
 
 score:       ## keyword prefilter, then LLM score on survivors
 	$(CLI) score
+
+daily:       ## THE ONE COMMAND: ingest -> score -> prepare -> pdf -> notify -> track
+	# Sizes prepare to the tailor model's remaining budget and falls back to
+	# flash-lite if that model is 503ing, which is the difference between this
+	# and running the six stages by hand. Quota day turns at 12:30 IST.
+	$(CLI) daily
 
 prepare:     ## tailor resume + screening answers for shortlisted jobs
 	$(CLI) prepare
@@ -114,4 +120,7 @@ review:      ## local review dashboard on 127.0.0.1:8080
 test:        ## run the test suite
 	$(PY) -m pytest tests/ -q
 
-all: ingest score prepare notify   ## the full daily run
+# Kept because the README and muscle memory both know this name. It used to be
+# `ingest score prepare notify`, which had no budget sizing, no tailor fallback
+# and -- the reason ten PDFs went missing on 2026-09-01 -- no pdf stage.
+all: daily   ## alias for `make daily`

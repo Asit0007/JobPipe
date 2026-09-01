@@ -317,3 +317,75 @@ def test_the_flag_is_not_re_derived_when_it_is_present():
     from jobpipe.score import apply_penalties
 
     assert apply_penalties(70, _row(location="Remote", remote=0))[0] == 70
+
+
+# --- 7. `cli daily` sizes prepare to the budget and falls back --------------
+
+def test_prepare_is_sized_to_the_tailor_budget_not_the_default_15(monkeypatch):
+    """prepare costs 2 calls/job against a 20/day cap (7.33).
+
+    The default limit of 15 asks for 30 calls and dies halfway with 429s.
+    """
+    from jobpipe import cli
+
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_ingest", lambda: None)
+    monkeypatch.setattr(cli, "cmd_score", lambda: None)
+    monkeypatch.setattr(cli, "cmd_notify", lambda: None)
+    monkeypatch.setattr(cli, "cmd_track", lambda: None)
+    monkeypatch.setattr(cli, "cmd_status", lambda: None)
+    monkeypatch.setattr(cli, "cmd_readme_stats", lambda: None)
+    monkeypatch.setattr(cli, "_pdf_all", lambda: None)
+    monkeypatch.setattr(cli.db, "fetch", lambda **k: [object()] * 40)
+    monkeypatch.setattr("jobpipe.llm.budget_remaining", lambda m=None: 9)
+
+    def fake_tailor(limit=15, model=None, log=print):
+        seen["limit"], seen["model"] = limit, model
+        return limit
+
+    monkeypatch.setattr("jobpipe.tailor.run", fake_tailor)
+    cli.cmd_daily()
+    assert seen["limit"] == 4, f"9 calls // 2 = 4 jobs, got {seen['limit']}"
+
+
+def test_a_tailor_that_produces_nothing_triggers_the_fallback(monkeypatch):
+    """Zero written with jobs waiting means the model is sick, not idle.
+
+    Measured 2026-09-01: gemini-flash-latest returned 503 on all five retries
+    and burned a quarter of its daily cap for zero documents.
+    """
+    from jobpipe import cli
+
+    calls = []
+    for name in ("cmd_ingest", "cmd_score", "cmd_notify", "cmd_track",
+                 "cmd_status", "cmd_readme_stats"):
+        monkeypatch.setattr(cli, name, lambda: None)
+    monkeypatch.setattr(cli, "_pdf_all", lambda: None)
+    monkeypatch.setattr(cli.db, "fetch", lambda **k: [object()] * 40)
+    monkeypatch.setattr("jobpipe.llm.budget_remaining", lambda m=None: 20)
+    monkeypatch.setattr("jobpipe.config.MODEL_TAILOR", "gemini-flash-latest")
+
+    def fake_tailor(limit=15, model=None, log=print):
+        calls.append(model)
+        return 0 if model is None else 3      # primary dies, fallback works
+
+    monkeypatch.setattr("jobpipe.tailor.run", fake_tailor)
+    cli.cmd_daily()
+    assert len(calls) == 2, f"expected a retry, got {calls}"
+    assert calls[1] == cli.FALLBACK_TAILOR, calls
+
+
+def test_no_second_attempt_when_the_primary_tailor_worked(monkeypatch):
+    from jobpipe import cli
+
+    calls = []
+    for name in ("cmd_ingest", "cmd_score", "cmd_notify", "cmd_track",
+                 "cmd_status", "cmd_readme_stats"):
+        monkeypatch.setattr(cli, name, lambda: None)
+    monkeypatch.setattr(cli, "_pdf_all", lambda: None)
+    monkeypatch.setattr(cli.db, "fetch", lambda **k: [object()] * 40)
+    monkeypatch.setattr("jobpipe.llm.budget_remaining", lambda m=None: 20)
+    monkeypatch.setattr("jobpipe.tailor.run",
+                        lambda limit=15, model=None, log=print: calls.append(model) or 5)
+    cli.cmd_daily()
+    assert calls == [None], f"must not re-run a tailor that worked: {calls}"
