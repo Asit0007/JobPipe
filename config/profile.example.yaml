@@ -5,7 +5,11 @@
 
 identity:
   name: Your Name
-  locations_ok: [Bangalore, Bengaluru, Hyderabad, Pune, Chennai, Remote, India]
+  # Bhubaneswar/Odisha and Dehradun/Uttarakhand added 2026-08-31. This list is
+  # fed verbatim to the scoring model as the locations you accept -- alerts were
+  # about to be set in two cities the scorer had never been told about.
+  locations_ok: [Bangalore, Bengaluru, Hyderabad, Pune, Chennai,
+                 Bhubaneswar, Odisha, Dehradun, Uttarakhand, Remote, India]
   years_experience: 4
 
   # NEVER auto-answered by the pipeline. Surfaced as a reminder on every

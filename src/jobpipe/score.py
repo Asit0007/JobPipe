@@ -165,6 +165,60 @@ def prefilter(job) -> tuple[bool, int, str]:
 # soft_penalty term names the ROLE, so it belongs to the title alone.
 BODY_MATCHED_PENALTIES = ("night shift", "rotational shift")
 
+# Remote is a stated preference, and it is also the only thing that makes the
+# Bhubaneswar and Uttarakhand targets viable at the 9-14 LPA band -- the
+# Dehradun market advertises roughly 3-5 LPA, below the floor.
+#
+# Matched on the LOCATION field alone, which is bug 7.18 applied before it can
+# happen again: "remote" is ordinary prose in a description ("remote hands",
+# "supporting remote teams", "remote desktop") and appears in JDs for roles
+# that are fully onsite. A location field saying Remote is unambiguous.
+#
+# +5, not +1: the scorer's output clusters on multiples of 5 (45, 70, 75, 80,
+# 83, 85) against a threshold of 45, so +1 would never move a row across it.
+# The magnitude matches the existing -5 for a truncated Adzuna JD.
+REMOTE_BONUS = 5
+REMOTE_TERMS = ("remote", "work from home", "wfh")
+
+
+def _column(job, key: str) -> str:
+    """One column, lowercased, from either a dict or a sqlite3.Row.
+
+    sqlite3.Row has no .get() and raises IndexError for an absent key, while a
+    dict raises KeyError. Same shape as claims._field(), and it exists for the
+    same reason: production passes a Row, the tests pass a dict.
+    """
+    try:
+        return (job[key] or "").lower()
+    except (KeyError, IndexError):
+        return ""
+
+
+def _is_remote(job) -> bool:
+    """The schema's own `remote` flag, with a location-text fallback.
+
+    `base.make_job()` already sets `remote` at ingest, from location AND title.
+    Re-deriving the same idea here from the location alone was the defect: two
+    definitions of one concept, disagreeing. Measured 2026-08-31 over 7,240
+    rows, they differed on 29 -- and the ones worth having were Adzuna's
+    "Senior AWS Cloud Engineer (Remote, Full-Time)" and "SRE Engineer, Remote",
+    both location=India. Title says remote, location does not. That is the
+    India-located remote inventory this search exists to find.
+
+    Reading the title does admit a known false positive -- "2nd Level & Remote
+    Support", where remote describes the work rather than the arrangement. It
+    is accepted: this is a +5 nudge, not a gate, and title_reject/hard_reject
+    already kill the roles it lands on. One definition, shared, beats two that
+    disagree -- the lesson 7.2 -> 7.25 -> 7.38 taught three times.
+    """
+    try:
+        flag = job["remote"]
+    except (KeyError, IndexError):
+        flag = None
+    if flag is not None:
+        return bool(flag)
+    return any(t in _column(job, "location") for t in REMOTE_TERMS)
+
 
 def apply_penalties(score: int, job) -> tuple[int, list[str]]:
     p = profile()
@@ -190,6 +244,9 @@ def apply_penalties(score: int, job) -> tuple[int, list[str]]:
     if job["source"] == "adzuna" and len(job["description"] or "") < 800:
         score -= 5
         applied.append("-5 (truncated JD)")
+    if _is_remote(job):
+        score += REMOTE_BONUS
+        applied.append(f"+{REMOTE_BONUS} (remote)")
     return max(0, min(100, score)), applied
 
 

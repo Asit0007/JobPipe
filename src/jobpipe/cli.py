@@ -255,6 +255,18 @@ def cmd_site():
         if pw and pw != getpass.getpass("Confirm: "):
             print("  passphrases did not match")
             sys.exit(1)
+    # Refuse BEFORE build(), not after. Without a TTY the prompt above is
+    # skipped silently, and build(passphrase=None) unlinks payload.enc and
+    # writes the queue in the clear -- so a non-interactive `make deploy` used
+    # to DESTROY a good encrypted export and leave plaintext on disk before
+    # the exit-2 guard below ever ran. The guard was in the right place for
+    # the upload and the wrong place for the export.
+    if not pw and not sys.stdin.isatty():
+        print("Refusing to export: no passphrase, and no terminal to ask for one.")
+        print("  An existing site/payload.enc has NOT been touched.")
+        print("  Set JOBPIPE_SITE_PASSPHRASE=... for an unattended run, or run")
+        print("  this from a terminal. Local-only plaintext export needs a TTY.")
+        sys.exit(2)
     out = site.build(passphrase=pw or None)
     if not pw:
         # Exit NON-ZERO. `make deploy` is `cli site && cd site && vercel --prod`,

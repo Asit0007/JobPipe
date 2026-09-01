@@ -17,8 +17,9 @@ worse than having no URL at all.
 from __future__ import annotations
 
 import re
+from collections import Counter
 
-from ..config import MODEL_SCORE, env
+from ..config import MODEL_SCORE, env, env_int
 from ..llm import generate_json
 from .base import make_job
 
@@ -36,10 +37,31 @@ from .base import make_job
 # Broad on purpose. A non-alert email that slips in costs one LLM call that
 # finds no jobs; a missed sender loses the postings in silence. Same trade the
 # alert prefilter carve-out makes in CLAUDE.md 3.
+# MEASURED 2026-08-31, and this is why the OR is not a nicety:
+#   label alone  -> 58 messages
+#   domains alone-> 64
+#   union        -> 64; the label caught 0 the domains missed, and the domains
+#                   caught 6 the label missed -- EVERY LinkedIn alert in the
+#                   window, because the user's Gmail filter does not route
+#                   linkedin.com into the label.
+# A bare `label:` query would have silently zeroed the LinkedIn channel, which
+# is the highest-headroom source in the plan.
+#
+# The label is OR'd with the domain list rather than replacing it, so the
+# query FAILS OPEN in both directions: a portal whose domain is not listed is
+# still caught once you file it under the label, and a portal you forget to
+# label is still caught by its domain. Setting GMAIL_ALERT_QUERY to a bare
+# `label:...` is the one way to lose mail here -- an alert that misses the
+# label becomes invisible, and this channel's every bug (7.2, 7.25, 7.34,
+# 7.38) has been "produced nothing, reported success".
 DEFAULT_QUERY = (
     'newer_than:3d ('
+    'label:"Job Notifications" OR '
     'from:linkedin.com OR from:naukri.com OR '
-    'from:indeed.com OR from:glassdoor.com OR from:glassdoor.co.in'
+    'from:indeed.com OR from:glassdoor.com OR from:glassdoor.co.in OR '
+    'from:foundit.in OR from:instahyre.com OR from:cutshort.io OR '
+    'from:hirist.tech OR from:hirist.com OR from:shine.com OR '
+    'from:timesjobs.com OR from:wellfound.com OR from:talent500.co'
     ')'
 )
 
@@ -64,7 +86,39 @@ JOB_LINK_HINTS = ("linkedin.com/jobs/view", "naukri.com/job-listings", "indeed.c
 # How far from a title a link may sit and still be considered its link. Anchor
 # markup puts the href just before the visible text, so the window is asymmetric
 # in practice but a symmetric bound is easier to reason about.
+# Sender substring -> board name, first match wins. A row lands as
+# `alert:<board>`, so an unmapped portal reports as "email" and its per-source
+# yield is invisible. Measured 2026-09-01: Wellfound was already mailing from
+# `team@hi.wellfound.com` and 9 of its postings were being dropped under the
+# anonymous "email" label.
+BOARDS = (
+    ("linkedin", "linkedin"), ("naukri", "naukri"), ("indeed", "indeed"),
+    ("glassdoor", "glassdoor"), ("wellfound", "wellfound"), ("foundit", "foundit"),
+    ("instahyre", "instahyre"), ("cutshort", "cutshort"), ("hirist", "hirist"),
+    ("shine", "shine"), ("timesjobs", "timesjobs"), ("talent500", "talent500"),
+)
+
 MAX_LINK_DISTANCE = 2000
+
+
+def link_hints() -> tuple[str, ...]:
+    """JOB_LINK_HINTS plus anything measured since the last release.
+
+    A posting whose link matches no hint is DROPPED, so every new portal
+    yields exactly zero rows until its host is known here. The hint has to be
+    read off a real alert email and lowercased -- never guessed. Glassdoor's
+    real link was `glassdoor.co.in/partner/jobListing.htm`, wrong case AND
+    wrong TLD against what this tuple held, and every Glassdoor link was
+    skipped for weeks (7.35).
+
+    Read from the environment on each call so adding a measured hint is a
+    .env line rather than a code change:
+        GMAIL_EXTRA_LINK_HINTS=foundit.in/job-detail,instahyre.com/jobs
+    """
+    extra = env("GMAIL_EXTRA_LINK_HINTS", "") or ""
+    return JOB_LINK_HINTS + tuple(
+        h.strip().lower() for h in extra.split(",") if h.strip()
+    )
 
 PROMPT = """Extract every distinct job posting from this job-alert email.
 
@@ -91,7 +145,7 @@ EMAIL:
 def _job_links(text: str) -> list[tuple[int, str]]:
     """Every posting link, with where it sits in the text. Order preserved."""
     return [(m.start(), m.group(0)) for m in LINK_RE.finditer(text)
-            if any(h in m.group(0).lower() for h in JOB_LINK_HINTS)]
+            if any(h in m.group(0).lower() for h in link_hints())]
 
 
 def _match_link(title: str, text: str, links: list[tuple[int, str]],
@@ -112,25 +166,40 @@ def _match_link(title: str, text: str, links: list[tuple[int, str]],
 def fetch(log=print) -> list[dict]:
     try:
         from ..gmail import body_text, headers, search
-        msgs = search(QUERY, max_results=25)
+        # Measured 2026-08-31: 62 alert emails arrived in a 3-day window while
+        # this was a hardcoded 25, and _search_imap keeps uids[-max_results:]
+        # -- the NEWEST 25. So 37 were discarded per run with nothing logged,
+        # and because Glassdoor sends over half the volume, the mail being
+        # evicted was LinkedIn's and Naukri's. Configurable, and the run says
+        # so when it hits the cap.
+        cap = env_int("GMAIL_ALERT_MAX", 60)
+        msgs = search(QUERY, max_results=cap)
     except Exception as e:
         log(f"  gmail_alert: {type(e).__name__} -- skipping ({e})")
         return []
 
     jobs: list[dict] = []
-    unmatched = 0
+    # Keyed by board, not a bare total: "23 dropped" cannot tell you WHICH
+    # portal is silent, and a portal that appears in the inbox but never in
+    # the database is the signature of a missing link hint.
+    unmatched: Counter[str] = Counter()
+    # Two different faults with two different fixes, and conflating them sends
+    # you to the wrong one. Measured 2026-09-01: 88 of 97 drops were on boards
+    # whose hints ALREADY existed, while the log told you to add a hint --
+    # 7.32's lesson (a confidently wrong diagnostic is worse than none) in code
+    # written the day before.
+    no_links: Counter[str] = Counter()
     for msg in msgs:
         text = body_text(msg)
         if not text:
             continue
         sender = headers(msg).get("from", "")
         sender_l = sender.lower()
-        board = ("linkedin" if "linkedin" in sender_l else
-                 "naukri" if "naukri" in sender_l else
-                 "indeed" if "indeed" in sender_l else
-                 "glassdoor" if "glassdoor" in sender_l else "email")
+        board = next((b for token, b in BOARDS if token in sender_l), "email")
 
         links = _job_links(text)
+        if not links:
+            no_links[board] += 1
 
         try:
             parsed = generate_json(
@@ -148,7 +217,7 @@ def fetch(log=print) -> list[dict]:
             if not url:
                 # No confident link. Dropping it beats attaching the wrong one:
                 # a wrong URL sends you to apply for somebody else's job.
-                unmatched += 1
+                unmatched[board] += 1
                 continue
             claimed.add(url)
             jobs.append(make_job(
@@ -169,6 +238,17 @@ def fetch(log=print) -> list[dict]:
                 description=(j.get("snippet") or "").strip(),
             ))
 
-    log(f"  gmail_alert: {len(jobs)} from {len(msgs)} emails"
-        + (f" ({unmatched} dropped, no confident link)" if unmatched else ""))
+    at_cap = " -- AT THE CAP, raise GMAIL_ALERT_MAX" if len(msgs) >= cap else ""
+    log(f"  gmail_alert: {len(jobs)} from {len(msgs)} of max {cap} emails{at_cap}")
+    # A hint is missing only when the email carried NO recognisable link at all.
+    for board, n in no_links.most_common():
+        log(f"  gmail_alert: {n} email(s) from {board} carried no recognisable"
+            f" posting link -- add its host to GMAIL_EXTRA_LINK_HINTS")
+    # Links were present and the title could not be paired to one. Adding a hint
+    # fixes nothing here; the model paraphrased the title, or no unclaimed link
+    # sits within MAX_LINK_DISTANCE. Dropping is correct (7.3) -- a wrong URL
+    # sends you to apply for somebody else's job.
+    for board, n in unmatched.most_common():
+        log(f"  gmail_alert: {n} posting(s) from {board} had links but no"
+            f" confident title match -- dropped rather than guess")
     return jobs

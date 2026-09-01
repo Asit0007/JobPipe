@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jobpipe import gmail                                    # noqa: E402
-from jobpipe.config import env                               # noqa: E402
+from jobpipe.config import env, env_int                      # noqa: E402
 
 
 def main() -> int:
@@ -87,12 +87,25 @@ def main() -> int:
     from jobpipe.sources.gmail_alerts import QUERY
     print(f"\n  alert query: {QUERY}")
     try:
-        msgs = gmail.search(QUERY, max_results=25)
+        # Deliberately ABOVE GMAIL_ALERT_MAX. This preflight exists to tell you
+        # how much mail is arriving; capping it at the ingest cap makes it report
+        # its own limit as a measurement. That is precisely what "25 message(s)
+        # matched" meant while 62 emails were arriving in the same window.
+        cap = env_int("GMAIL_ALERT_MAX", 60)
+        probe = max(cap * 4, 200)
+        msgs = gmail.search(QUERY, max_results=probe)
     except Exception as e:
         print(f"  FAIL  search: {type(e).__name__}: {e}")
         return 1
 
     print(f"  OK    {len(msgs)} message(s) matched")
+    if len(msgs) > cap:
+        print(f"  WARN  ingest reads only the newest {cap} of these"
+              f" -- {len(msgs) - cap} would be dropped in silence."
+              f" Raise GMAIL_ALERT_MAX or cut a portal's alert count.")
+    elif len(msgs) >= probe:
+        print(f"  WARN  hit this preflight's own {probe} probe limit;"
+              f" the real total is higher.")
     if not msgs:
         print("\n  Authenticated fine, but nothing matched. That is a QUERY problem,")
         print("  not a credential problem: either no alert mail has arrived in the")

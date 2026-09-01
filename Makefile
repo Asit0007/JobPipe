@@ -54,7 +54,33 @@ deploy:      ## re-export and push to Vercel in one step
 	# code: nothing reaches a public host unless ciphertext is on disk.
 	$(CLI) site
 	@test -s site/payload.enc || { echo "site/payload.enc missing -- refusing to deploy"; exit 2; }
-	cd site && vercel --prod
+	# --yes is LOAD-BEARING, not a convenience. Without a TTY the CLI skips its
+	# setup prompt and uploads NOTHING, while still creating a deployment that
+	# reports "Ready". Measured 2026-08-31: four consecutive production
+	# deployments, all Ready, all with no file tree, all serving 404 -- while
+	# site/ sat on disk with a 220 kB payload.enc. This was already known and
+	# written down; the fix had only ever been typed by hand in a shell, never
+	# put in the Makefile, so `make deploy` kept reproducing it.
+	cd site && vercel --prod --yes
+	# A deploy that uploaded nothing is indistinguishable from a good one until
+	# you open the site. Assert it, the same way the payload.enc test above
+	# asserts the export: this project's whole bug history is "reported
+	# success, produced nothing".
+	@$(MAKE) --no-print-directory verify-deploy
+
+verify-deploy: ## assert the live site actually serves the encrypted payload
+	@url=$${JOBPIPE_SITE_URL:-https://jobpipe-ten.vercel.app}; \
+	code=$$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$$url/payload.enc"); \
+	size=$$(curl -s -o /dev/null -w '%{size_download}' -m 30 "$$url/payload.enc"); \
+	if [ "$$code" != "200" ]; then \
+	  echo "DEPLOY FAILED: $$url/payload.enc returned $$code, not 200."; \
+	  echo "  A 404 here with files on disk means the upload was empty."; \
+	  exit 3; \
+	elif [ "$$size" -lt 10000 ]; then \
+	  echo "DEPLOY FAILED: payload.enc served only $$size bytes."; exit 3; \
+	else \
+	  echo "deploy verified: $$url/payload.enc 200, $$size bytes"; \
+	fi
 
 rescreen:    ## refresh screening answers after a facts.yaml change (1 call/job)
 	$(CLI) rescreen $(or $(JOB),all)
