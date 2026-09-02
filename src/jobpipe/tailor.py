@@ -184,19 +184,23 @@ def run(log=print, limit: int = 15, model: str | None = None) -> int:
         # dashboard's prepared-doc panel has always implied they exist.
         screen = None
         try:
-            screen = screening.generate_for(job)
+            screen = screening.generate_for(job, model=model)
         except QuotaExhausted:
             log("  ! budget spent before screening answers; resume prepared without them")
         except Exception as e:
             log(f"  screening failed for {job['company']}: {type(e).__name__}")
 
         path = OUT_DIR / f"{job['id']:05d}_{_slug(job['company'])}.md"
-        path.write_text(_render(job, out, kept, rejected, screen, flags))
+        # Screening is a second call and can land on a different model than the
+        # bullets -- so it is recorded separately, and left null when it failed.
+        used = {"tailor": model or MODEL_TAILOR,
+                "screening": (model or MODEL_TAILOR) if screen else None}
+        path.write_text(_render(job, out, kept, rejected, screen, flags, models=used))
 
         # The payload is stored so the .tex can be rebuilt for free. Re-running
         # prepare to change a layout would cost 2 of the tailor model's 20
         # daily calls per job (CLAUDE.md 7.33); `cli tex` costs nothing.
-        doc = render.payload(job, out, kept, flags, screen)
+        doc = render.payload(job, out, kept, flags, screen, models=used)
         render.write_sidecar(doc, path)
         tex_path = render.write_tex(doc, path)
 
@@ -213,7 +217,8 @@ def _slug(s: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in s.lower())[:40].strip("-")
 
 
-def _render(job, out, kept, rejected, screen: dict | None = None, flags: dict | None = None) -> str:
+def _render(job, out, kept, rejected, screen: dict | None = None, flags: dict | None = None,
+            models: dict | None = None) -> str:
     lines = [
         f"# {job['title']}", f"**{job['company']}** - {job['location'] or 'n/a'}",
         f"Fit score: **{job['score']}** - {job['score_reason']}",
@@ -236,6 +241,11 @@ def _render(job, out, kept, rejected, screen: dict | None = None, flags: dict | 
     if rejected:
         lines.append(f"\n> Dropped unverified fact IDs: {', '.join(rejected)}")
     lines += _flag_lines(flags or {})
+    if models:
+        t, s = models.get("tailor"), models.get("screening")
+        lines.append(f"\n<sub>bullets by {t or 'unknown'}"
+                     + (f"; screening by {s}" if s and s != t else "")
+                     + "</sub>")
     lines.append("\n---\n**You submit this yourself.** Nothing here has been sent anywhere.")
     return "\n".join(lines)
 

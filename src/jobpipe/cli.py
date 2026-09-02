@@ -139,7 +139,8 @@ def cmd_tex():
         render.write_sidecar(doc, md)
         tex = render.write_tex(doc, md)
         md.write_text(tailor._render(doc["job"], doc, doc["bullets"], [],
-                                     doc.get("screening"), doc["flags"]))
+                                     doc.get("screening"), doc["flags"],
+                                     models=doc.get("models")))
         flags = doc["flags"]
         bits = []
         if flags.get("dropped"):
@@ -299,18 +300,29 @@ def cmd_rescreen():
     every prepared document was still saying "my candidate profile does not
     specify my work authorization status".
     """
-    from . import render, screening, tailor
+    from . import llm, render, screening, tailor
+    from .config import MODEL_TAILOR
     target = sys.argv[2] if len(sys.argv) > 2 else "all"
     docs = render.documents(target)
     if not docs:
         print(f"no prepared documents matching {target!r} in out/")
         return
+    # Same fallback `daily` applies to prepare. Without it a rescreen run on a
+    # day MODEL_TAILOR is spent or 503ing dies on the first document -- which is
+    # exactly how 15 documents ended up with no screening answers on 2026-09-02.
+    model = MODEL_TAILOR
+    if llm.budget_remaining(model) < 1:
+        model = FALLBACK_TAILOR
+        print(f"  {MODEL_TAILOR} has no budget left; using {model}")
     done = 0
     for md in docs:
         doc = render.load(md)
         _refresh_job(doc)
         try:
-            doc["screening"] = screening.generate_for(doc["job"])
+            doc["screening"] = screening.generate_for(doc["job"], model=model)
+            # Only the screening half changed; the bullets keep whatever model
+            # wrote them, which may be a different one on a different day.
+            doc["models"] = {**(doc.get("models") or {}), "screening": model}
         except Exception as e:
             print(f"  ! {md.name}: {type(e).__name__}: {str(e)[:90]}")
             break
@@ -318,7 +330,8 @@ def cmd_rescreen():
         render.write_sidecar(doc, md)
         render.write_tex(doc, md)
         md.write_text(tailor._render(doc["job"], doc, doc["bullets"], [],
-                                     doc["screening"], doc["flags"]))
+                                     doc["screening"], doc["flags"],
+                                     models=doc.get("models")))
         weak = sum(1 for a in (doc["screening"].get("answers") or [])
                    if a.get("confidence") == "low")
         print(f"  {md.stem}  {len(doc['screening'].get('answers') or [])} answers"

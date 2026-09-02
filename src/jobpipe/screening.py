@@ -60,7 +60,7 @@ RULES:
 """
 
 
-def generate_for(job) -> dict:
+def generate_for(job, model: str | None = None) -> dict:
     cfg, p = facts(), profile()
     skills = cfg.get("skills", {})
     bullets = [
@@ -82,7 +82,7 @@ def generate_for(job) -> dict:
             title=job["title"], company=job["company"],
             description=(job["description"] or "")[:4000],
         ),
-        model=MODEL_TAILOR, temperature=0.3,
+        model=model or MODEL_TAILOR, temperature=0.3,
     )
     out["human_only"] = HUMAN_ONLY
     return out

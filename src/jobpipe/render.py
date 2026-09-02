@@ -34,7 +34,17 @@ ENGINES = ("tectonic", "latexmk", "pdflatex", "xelatex")
 # --------------------------------------------------------------------------
 # payload: build, store, recover
 # --------------------------------------------------------------------------
-def payload(job, out: dict, bullets: list[dict], flags: dict, screen: dict | None) -> dict:
+def payload(job, out: dict, bullets: list[dict], flags: dict, screen: dict | None,
+            models: dict | None = None) -> dict:
+    """The stored payload. `models` names the model behind each half.
+
+    Tailoring and screening are separate calls and can land on different
+    models: `daily` falls back to flash-lite when MODEL_TAILOR is 503ing, and
+    `rescreen` re-answers screening long after the bullets were written. On
+    2026-09-02 both happened at once and no artifact could say which model had
+    produced which text -- while the bullets carry `from Fxxx:` provenance
+    precisely so drift is traceable, and weaker models drift more.
+    """
     return {
         "job": {k: job[k] for k in ("id", "title", "company", "location", "description",
                                     "score", "score_reason", "apply_url", "url")},
@@ -44,6 +54,7 @@ def payload(job, out: dict, bullets: list[dict], flags: dict, screen: dict | Non
         "bullets": bullets,
         "flags": flags,
         "screening": screen,
+        "models": models or {},
     }
 
 
@@ -124,6 +135,7 @@ def parse_markdown(text: str, path: Path | None = None, cfg: dict | None = None)
         "bullets": bullets,
         "flags": {"unsourced": unsourced} if unsourced else {},
         "screening": None,
+        "models": {},
     }
     return doc
 
