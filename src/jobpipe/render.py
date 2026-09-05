@@ -249,15 +249,33 @@ def gate(bullets: list[dict], out: dict, cfg: dict | None = None) -> tuple[list[
 # --------------------------------------------------------------------------
 # writing
 # --------------------------------------------------------------------------
+def write_if_changed(path: Path, text: str) -> bool:
+    """Write only when the bytes differ. Returns True if the file was touched.
+
+    An unconditional write bumps the mtime even when the content is identical,
+    and `cli pdf` decides what to recompile by comparing the .tex mtime against
+    the .pdf. So a no-op `cli tex` used to invalidate all 45 PDFs. Making the
+    write content-addressed is what lets the freshness check downstream mean
+    "this document changed" rather than "this command ran".
+    """
+    try:
+        if path.read_text() == text:
+            return False
+    except OSError:
+        pass
+    path.write_text(text)
+    return True
+
+
 def write_tex(doc: dict, md_path: Path) -> Path:
     path = md_path.with_suffix(".tex")
-    path.write_text(latexdoc.render(doc))
+    write_if_changed(path, latexdoc.render(doc))
     return path
 
 
 def write_sidecar(doc: dict, md_path: Path) -> Path:
     path = sidecar(md_path)
-    path.write_text(json.dumps(doc, indent=2, ensure_ascii=False))
+    write_if_changed(path, json.dumps(doc, indent=2, ensure_ascii=False))
     return path
 
 
@@ -275,6 +293,26 @@ def documents(target: str | None = None) -> list[Path]:
 # --------------------------------------------------------------------------
 def find_engine() -> str | None:
     return next((e for e in ENGINES if shutil.which(e)), None)
+
+
+def is_stale(tex_path: Path) -> bool:
+    """Does this .tex need compiling?
+
+    The PDF is a pure function of the .tex -- `latexdoc` derives it offline and
+    `cli tex` rewrites it whenever the payload or the rules change -- so the
+    mtime pair is the whole answer. Missing PDF, or a PDF older than its
+    source, means compile; anything else is already on disk.
+
+    `daily` runs `pdf all` on every run, which recompiled all 45 documents
+    nightly to reproduce 29 byte-identical files and, worse, reset every PDF's
+    mtime so "which of these is new" stopped being answerable from the
+    directory listing.
+    """
+    pdf = tex_path.with_suffix(".pdf")
+    try:
+        return pdf.stat().st_mtime < tex_path.stat().st_mtime
+    except OSError:
+        return True
 
 
 def compile_pdf(tex_path: Path, engine: str | None = None,

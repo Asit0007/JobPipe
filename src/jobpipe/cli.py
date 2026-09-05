@@ -115,7 +115,7 @@ def cmd_tex():
     the skill rows can still be ordered against the JD.
     """
     from . import render
-    target = sys.argv[2] if len(sys.argv) > 2 else "all"
+    target = _target_and_force()[0]
     docs = render.documents(target)
     if not docs:
         print(f"no prepared documents matching {target!r} in out/")
@@ -138,9 +138,9 @@ def cmd_tex():
 
         render.write_sidecar(doc, md)
         tex = render.write_tex(doc, md)
-        md.write_text(tailor._render(doc["job"], doc, doc["bullets"], [],
-                                     doc.get("screening"), doc["flags"],
-                                     models=doc.get("models")))
+        render.write_if_changed(md, tailor._render(
+            doc["job"], doc, doc["bullets"], [], doc.get("screening"),
+            doc["flags"], models=doc.get("models")))
         flags = doc["flags"]
         bits = []
         if flags.get("dropped"):
@@ -302,7 +302,7 @@ def cmd_rescreen():
     """
     from . import llm, render, screening, tailor
     from .config import MODEL_TAILOR
-    target = sys.argv[2] if len(sys.argv) > 2 else "all"
+    target = _target_and_force()[0]
     docs = render.documents(target)
     if not docs:
         print(f"no prepared documents matching {target!r} in out/")
@@ -352,14 +352,21 @@ def cmd_pdf():
               "including overleaf.com.")
         sys.exit(1)
 
-    target = sys.argv[2] if len(sys.argv) > 2 else "all"
+    target, force = _target_and_force()
     docs = render.documents(target)
-    made, failed = 0, 0
+    made, failed, current = 0, 0, 0
     for md in docs:
         tex = md.with_suffix(".tex")
         if not tex.exists():
             print(f"  ! {tex.name} missing -- run `cli tex` first")
             failed += 1
+            continue
+        # A PDF newer than its .tex is already the document this .tex renders.
+        # Recompiling it costs ~1.3s of tectonic each and rewrites a
+        # byte-identical file, and the mtime it resets is how you tell which
+        # documents are new. `--force` is the escape hatch.
+        if not force and not render.is_stale(tex):
+            current += 1
             continue
         ok, detail, pages = render.compile_pdf(tex, engine)
         if not ok:
@@ -375,9 +382,22 @@ def cmd_pdf():
             note += "  <- over two pages, trim"
         print(f"  {tex.with_suffix('.pdf').name}{note}")
         made += 1
-    print(f"\n{made} PDF(s) written by {engine}" + (f", {failed} failed" if failed else ""))
+    parts = [f"{made} PDF(s) written by {engine}"]
+    if current:
+        parts.append(f"{current} already current (--force to recompile)")
+    if failed:
+        parts.append(f"{failed} failed")
+    print("\n" + ", ".join(parts))
     if failed:
         sys.exit(1)
+
+
+def _target_and_force() -> tuple[str, bool]:
+    """Parse `[job_id|all] [--force]` off argv, in either order."""
+    args = sys.argv[2:]
+    force = any(a in ("--force", "-f") for a in args)
+    target = next((a for a in args if not a.startswith("-")), "all")
+    return target, force
 
 
 def _refresh_job(doc: dict) -> None:

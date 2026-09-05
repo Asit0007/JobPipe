@@ -77,12 +77,12 @@ a model:
 <!-- funnel:start -->
 | stage | count | |
 |---|---:|---|
-| ingested | **8,408** | 10 sources, deduplicated |
-| killed on keywords | -3,671 | fewer than 2 must-haves present |
-| killed on title | -2,472 | sales roles whose JD lists your whole toolchain |
-| killed on hard rejects | -515 | seniority, shift work, geography |
-| **reach an LLM call** | **1,750** | 20% - *this is what protects the free tier* |
-| shortlisted | **155** | above `shortlist_min_score` |
+| ingested | **9,403** | 10 sources, deduplicated |
+| killed on keywords | -4,123 | fewer than 2 must-haves present |
+| killed on title | -2,650 | sales roles whose JD lists your whole toolchain |
+| killed on hard rejects | -556 | seniority, shift work, geography |
+| **reach an LLM call** | **2,074** | 22% - *this is what protects the free tier* |
+| shortlisted | **230** | above `shortlist_min_score` |
 | **queued for you** | 15/day cap | because volume is not the goal |
 <!-- funnel:end -->
 
@@ -368,7 +368,7 @@ make ingest      # pull every source, normalize, dedup
 make score       # free prefilter, then LLM on the survivors
 make prepare     # tailored bullets + screening answers -> .md, .tex, .json
 make tex         # rebuild .tex from the stored payload -- free, no LLM call
-make pdf         # compile the .tex to PDF -- free
+make pdf         # compile the .tex to PDF -- free, skips what is current
 make notify      # push the day's shortlist to Telegram
 make status      # pipeline counts and remaining quota
 ```
@@ -381,7 +381,7 @@ make status      # pipeline counts and remaining quota
 
 | file | for |
 |---|---|
-| `.md` | **auditing.** Every bullet carries `from Fxxx:` with the original fact text underneath. A PDF cannot show that, and it is how you catch a rewrite that drifted. |
+| `.md` | **auditing.** A rewritten bullet carries `from Fxxx:` with the original fact text underneath — that is how you catch a rewrite that drifted, and a PDF cannot show it. The line is emitted only when the rewrite differs from its source fact, so a document with *no* provenance lines is not missing its audit trail: it is one the model copied verbatim rather than tailored. |
 | `.tex` | **sending.** Carries the provenance map, the never_claim flags, a pre-send checklist and a block of automated checks as comments. |
 | `.json` | the validated payload, so the `.tex` can be rebuilt without spending an LLM call. |
 
@@ -389,6 +389,7 @@ make status      # pipeline counts and remaining quota
 make tex          # rebuild every .tex from the stored payload -- free, offline
 make tex JOB=56   # just one
 make pdf JOB=56   # compile it
+make pdf FORCE=--force   # recompile even what is already current
 make claims       # show exactly what the never_claim gate matches on
 make site         # export the queue as an encrypted static site
 make deploy       # re-export and push to a static host
@@ -418,6 +419,16 @@ filename-based safeguard was not one.
 PDF needs a TeX engine. `brew install tectonic` is the light option — one
 binary that fetches only the packages a document uses. `make pdf` reports the
 page count and warns past two.
+
+**`make pdf` only compiles a `.tex` newer than its `.pdf`.** `daily` runs it
+over every prepared document every night, which was 60 compiles to reproduce
+45 byte-identical files — and it reset every PDF's mtime, so "which of these
+is new" stopped being answerable from a directory listing. The freshness check
+only means anything because the writers are content-addressed too: `make tex`
+rewrites a file only when the bytes actually differ, otherwise one no-op
+rebuild would invalidate every PDF again. Measured on 60 documents: a repeat
+`make tex` touches 0 of 240 files, and the following `make pdf` compiles
+nothing. `FORCE=--force` overrides.
 
 **What the `.tex` checks for you.** Resume advice is mostly rules nobody verifies.
 These are verified, and reported in the file:

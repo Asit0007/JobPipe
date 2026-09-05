@@ -46,8 +46,11 @@ prepare:     ## tailor resume + screening answers for shortlisted jobs
 tex:         ## rebuild .tex from prepared docs (no LLM call) -- `make tex JOB=56`
 	$(CLI) tex $(or $(JOB),all)
 
-pdf:         ## compile prepared .tex to PDF -- `make pdf JOB=56`
-	$(CLI) pdf $(or $(JOB),all)
+pdf:         ## compile .tex to PDF, skipping what is current -- `make pdf JOB=56 FORCE=--force`
+	# Only recompiles a .tex newer than its .pdf. `daily` runs this every night
+	# over every prepared document; without the check that was 45 tectonic runs
+	# to reproduce ~29 byte-identical files and reset every PDF's mtime.
+	$(CLI) pdf $(or $(JOB),all) $(FORCE)
 
 readme-stats: ## regenerate the README funnel table from the live DB (free)
 	$(CLI) readme-stats
