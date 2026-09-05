@@ -8,15 +8,27 @@
 # roles you already reviewed. Annoying, not dangerous, but it is the reason
 # this is the fallback and not the deployment.
 #
-# Gmail is also effectively unavailable here: the OAuth flow needs a browser
-# once, and the refresh token would have to live in a secret and be written
-# back after every rotation. The ATS sources work fine.
+# Gmail works here now. The OAuth flow needed a browser once and a refresh
+# token written back after every rotation, which is why this used to say Gmail
+# was unavailable -- but the reader moved to IMAP + an App Password, which is a
+# static credential that fits a secret. Set GMAIL_ADDRESS and
+# GMAIL_APP_PASSWORD and the alert channel runs here too. That matters: it is
+# the highest-yield source in the pipeline (28% of its rows shortlist, against
+# 2.6% for greenhouse).
 
 name: pipeline
 
 on:
   schedule:
-    - cron: "30 1 * * 1-5"      # 07:00 IST, weekdays. UTC in cron, always.
+    # 08:30 UTC = 14:00 IST, weekdays. UTC in cron, always.
+    #
+    # This deliberately runs in the EARLY AFTERNOON, not at breakfast. Google
+    # rolls the free-tier day at midnight America/Los_Angeles -- 07:00 UTC in
+    # PDT, 08:00 UTC in PST -- so an 01:30 UTC run (the old value) started on
+    # the PREVIOUS quota day and inherited whatever an evening session had
+    # already spent. 08:30 UTC is past the boundary in both halves of the year,
+    # so every run begins on a full quota.
+    - cron: "30 8 * * 1-5"
   workflow_dispatch:            # and a manual button
 
 concurrency:
@@ -56,7 +68,9 @@ jobs:
           # history and your salary target. Paste each file's contents into a
           # repository secret of the same name.
           if [ -z "$PROFILE_YAML" ] || [ -z "$FACTS_YAML" ]; then
-            echo "::error::Set the PROFILE_YAML and FACTS_YAML repository secrets."
+            echo "::error::PROFILE_YAML and/or FACTS_YAML repository secret is \
+          not set, so this scheduler has never actually run. From a checkout \
+          with your real config present, run: make arm-ci"
             exit 1
           fi
           printf '%s' "$PROFILE_YAML" > config/profile.yaml
@@ -68,19 +82,28 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           MODEL_SCORE: ${{ vars.MODEL_SCORE || 'gemini-flash-lite-latest' }}
           MODEL_TAILOR: ${{ vars.MODEL_TAILOR || 'gemini-flash-latest' }}
-          GEMINI_RPM: ${{ vars.GEMINI_RPM || '12' }}
-          GEMINI_RPD_BUDGET: ${{ vars.GEMINI_RPD_BUDGET || '1200' }}
+          # MEASURED, not guessed. 12 RPM produced sustained 429s and made
+          # score.run() abort batches; 1200/day is fiction -- the real free-tier
+          # cap is 500/day per model, and 20/day on gemini-flash-latest.
+          GEMINI_RPM: ${{ vars.GEMINI_RPM || '10' }}
+          GEMINI_RPD_BUDGET: ${{ vars.GEMINI_RPD_BUDGET || '500' }}
           PII_DENY_TERMS: ${{ secrets.PII_DENY_TERMS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_ALERT_MAX: ${{ vars.GMAIL_ALERT_MAX || '80' }}
+          GMAIL_EXTRA_LINK_HINTS: ${{ vars.GMAIL_EXTRA_LINK_HINTS }}
         run: |
-          python -m jobpipe.cli ingest
-          python -m jobpipe.cli score
-          python -m jobpipe.cli prepare
-          python -m jobpipe.cli notify
-          python -m jobpipe.cli status
+          # `daily`, not the five stages by hand. Running them individually has
+          # no budget sizing (prepare asks for 30 calls against a 20/day cap and
+          # dies halfway), no fallback when the tailor model is 503ing, and no
+          # pdf stage -- which is how ten PDFs went missing on 2026-09-01.
+          # -u because a runner that is cancelled or times out discards
+          # everything still sitting in Python's block buffer.
+          python -u -m jobpipe.cli daily
 
       - name: Keep the prepared documents
         if: always()

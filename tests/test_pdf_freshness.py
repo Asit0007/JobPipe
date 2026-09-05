@@ -90,3 +90,31 @@ def test_an_unchanged_rerender_does_not_invalidate_the_pdf(tmp_path):
 
     render.write_if_changed(tex, r"\documentclass{report}")
     assert render.is_stale(tex) is True
+
+
+def test_daily_pdf_stage_survives_a_missing_tex_engine(monkeypatch):
+    """`cli pdf` exits 1 with no TeX engine. `daily` must not die with it.
+
+    SystemExit derives from BaseException, so it slips past cmd_daily's
+    `except Exception` and would abort the run BEFORE notify and track -- the
+    stages that actually reach the human. Both deployments ship without a TeX
+    engine deliberately (the Dockerfile dropped texlive; an Actions runner
+    never had one), so this is the normal path there, not an edge case.
+    """
+    from jobpipe import cli, render
+    monkeypatch.setattr(render, "find_engine", lambda: None)
+    cli._pdf_all()          # must return, not raise
+
+
+def test_cli_pdf_itself_still_fails_loudly_without_an_engine(monkeypatch):
+    """The other half: an explicit `cli pdf` must still be an error.
+
+    You asked for a PDF and did not get one. Only the daily stage is tolerant.
+    """
+    import sys
+    import pytest
+    from jobpipe import cli, render
+    monkeypatch.setattr(render, "find_engine", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["cli", "pdf", "all"])
+    with pytest.raises(SystemExit):
+        cli.cmd_pdf()

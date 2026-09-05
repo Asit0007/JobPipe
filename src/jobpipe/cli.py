@@ -539,6 +539,23 @@ def cmd_daily():
 
 
 def _pdf_all():
+    """`cli pdf all`, but as a stage that cannot take the run down with it.
+
+    `cmd_pdf` exits 1 when no TeX engine is on PATH. That is right for an
+    explicit `cli pdf` -- you asked for a PDF and did not get one -- and wrong
+    here: `SystemExit` derives from BaseException, so it slips past `stage()`'s
+    `except Exception` and aborts `daily` **before notify and track**.
+
+    This is the normal case on both deployments, not an edge case. The
+    Dockerfile deliberately ships no texlive (7.12) and an Actions runner has
+    none either, so every scheduled `daily` would have stopped at this stage and
+    silently never queued anything to Telegram.
+    """
+    from . import render
+    if not render.find_engine():
+        print("  no TeX engine on PATH -- skipping. The .tex files are ready to "
+              "compile anywhere;\n  run `make pdf` where one is installed.")
+        return
     argv = sys.argv
     sys.argv = ["cli", "pdf", "all"]
     try:

@@ -450,7 +450,7 @@ extracted heuristically from prose, so they are worth auditing rather than trust
 
 ## The daily loop
 
-Telegram pings you at 07:00 with up to fifteen roles. Each shows the fit score,
+Telegram pings you early afternoon with up to fifteen roles. Each shows the fit score,
 the deciding reason, your genuine skill gaps, and a link.
 
 Open `make review`, expand the prepared bullets and screening answers, apply on
@@ -477,12 +477,27 @@ ssh ubuntu@<ip> 'cd ~/jobpipe && bash deploy/oci-setup.sh'
 
 The dashboard binds to `127.0.0.1` only. Reach it through a Cloudflare Tunnel
 behind Cloudflare Access — no open ports, no ingress rule. `deploy/crontab`
-drives the schedule via supercronic, so runs happen at 07:00 IST and stay there.
+drives the schedule via supercronic.
+
+**The full run is at 14:00 IST, and the hour is load-bearing.** Google rolls the
+free-tier day at midnight America/Los_Angeles — 12:30 IST in PDT, 13:30 in PST —
+so a breakfast run sits on the *previous* quota day and inherits whatever an
+evening session already spent. On the tailor model, whose free cap is 20 calls a
+day, that is routinely all of it. Reply tracking still runs at 07:00 and 19:00;
+it spends no LLM budget.
 
 **Fallback — GitHub Actions.** `.github/workflows/pipeline.yml` runs weekdays at
-07:00 IST. It works, with one real caveat: runners are ephemeral, so the SQLite
-file that *is* the dedup layer rides in the Actions cache. On a cache miss every
-posting looks new. Fine as a backup, wrong as a home.
+08:30 UTC. Two caveats, one of them the kind you only find by checking:
+
+- **It needs your gitignored config as repository secrets, and it exits 1
+  without them.** Run `make arm-ci` once — it prompts first, because it uploads
+  your work history to GitHub. Until you do, every scheduled run fails at its
+  first step without reaching the pipeline, which is exactly what this repo's
+  own history shows.
+- Runners are ephemeral, so the SQLite file that *is* the dedup layer rides in
+  the Actions cache. On a cache miss every posting looks new.
+
+Fine as a backup, wrong as a home.
 
 **Not Vercel.** Rate-limited scoring of 100 jobs takes 8–10 minutes against a
 ~60s function ceiling, and the SQLite file would reset on every invocation.

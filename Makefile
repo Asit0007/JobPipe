@@ -1,4 +1,4 @@
-.PHONY: help install config doctor verify ingest fetch-jd score daily prepare tex pdf rescreen site deploy verify-deploy readme-stats claims notify track review status test all gmail-auth gmail-imap-check telegram-check
+.PHONY: help install config doctor verify ingest fetch-jd score daily prepare tex pdf rescreen site deploy verify-deploy readme-stats claims notify track review status test all gmail-auth gmail-imap-check telegram-check arm-ci
 
 PY ?= python3
 CLI := $(PY) -m jobpipe.cli
@@ -114,6 +114,13 @@ gmail-imap-check: ## verify the Gmail App Password and the alert query (no OAuth
 
 telegram-check: ## verify TELEGRAM_BOT_TOKEN/CHAT_ID actually deliver a message
 	$(PY) scripts/telegram_check.py
+
+arm-ci:      ## upload your config to GitHub so the fallback scheduler can run
+	# The Actions workflow needs profile.yaml and facts.yaml as repository
+	# secrets and exits 1 without them -- which is why every scheduled run
+	# had failed at its first step without ever reaching the pipeline.
+	# Prompts before uploading: this puts your work history on GitHub.
+	bash scripts/arm_ci_secrets.sh
 
 review:      ## local review dashboard on 127.0.0.1:8080
 	# Loopback only. Compose already does this; the Makefile used to expose
