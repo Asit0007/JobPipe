@@ -115,11 +115,12 @@ gmail-imap-check: ## verify the Gmail App Password and the alert query (no OAuth
 telegram-check: ## verify TELEGRAM_BOT_TOKEN/CHAT_ID actually deliver a message
 	$(PY) scripts/telegram_check.py
 
-arm-ci:      ## upload your config to GitHub so the fallback scheduler can run
-	# The Actions workflow needs profile.yaml and facts.yaml as repository
-	# secrets and exits 1 without them -- which is why every scheduled run
-	# had failed at its first step without ever reaching the pipeline.
-	# Prompts before uploading: this puts your work history on GitHub.
+arm-ci:      ## optional: config -> GitHub secrets, for a MANUAL Actions run
+	# Only needed if you hand-trigger .github/workflows/pipeline.yml, which is
+	# workflow_dispatch-only on purpose: the dedup DB does not survive between
+	# runs there. `make daily` locally is the normal way to run this.
+	# Prompts before uploading -- this puts your work history on GitHub -- and
+	# needs no `gh`: without it, it prints the browser steps instead.
 	bash scripts/arm_ci_secrets.sh
 
 review:      ## local review dashboard on 127.0.0.1:8080

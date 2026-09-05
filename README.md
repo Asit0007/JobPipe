@@ -486,18 +486,28 @@ evening session already spent. On the tailor model, whose free cap is 20 calls a
 day, that is routinely all of it. Reply tracking still runs at 07:00 and 19:00;
 it spends no LLM budget.
 
-**Fallback — GitHub Actions.** `.github/workflows/pipeline.yml` runs weekdays at
-08:30 UTC. Two caveats, one of them the kind you only find by checking:
+**Simplest of all — just run it yourself.** `make daily` on the machine you
+already review from. No infrastructure, the database is a file on your disk, and
+nothing leaves the box but the API calls. This is the default, and for one person
+applying to fifteen roles a day it is usually the right answer.
 
-- **It needs your gitignored config as repository secrets, and it exits 1
-  without them.** Run `make arm-ci` once — it prompts first, because it uploads
-  your work history to GitHub. Until you do, every scheduled run fails at its
-  first step without reaching the pipeline, which is exactly what this repo's
-  own history shows.
-- Runners are ephemeral, so the SQLite file that *is* the dedup layer rides in
-  the Actions cache. On a cache miss every posting looks new.
+**GitHub Actions is a manual escape hatch, not a scheduler.**
+`.github/workflows/pipeline.yml` is `workflow_dispatch` only, deliberately:
 
-Fine as a backup, wrong as a home.
+- **Runners are ephemeral, so the SQLite file that *is* the dedup layer rides in
+  the Actions cache** — evicted after 7 days of no reads, or when the repo's
+  10 GB budget fills. On a miss every posting looks new and the queue fills with
+  roles you already reviewed.
+- **It is the only option that needs your work history uploaded.**
+  `profile.yaml` and `facts.yaml` are gitignored because they name your
+  employer; running here means putting them in repository secrets.
+
+Both are survivable for a one-off catch-up run you are watching. Neither is
+survivable unattended — which is why the schedule is gone, and why it had failed
+every run for weeks before anyone checked. To use it: set `PROFILE_YAML`,
+`FACTS_YAML` and `GEMINI_API_KEY` under *Settings → Secrets and variables →
+Actions* (or run `make arm-ci`, which does the same thing with `gh` and prints
+the browser steps if you do not have it), then press **Run workflow**.
 
 **Not Vercel.** Rate-limited scoring of 100 jobs takes 8–10 minutes against a
 ~60s function ceiling, and the SQLite file would reset on every invocation.

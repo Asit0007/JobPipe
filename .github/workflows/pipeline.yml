@@ -1,12 +1,20 @@
-# Fallback scheduler. The OCI box is the real deployment -- see deploy/.
+# MANUAL ESCAPE HATCH. Not a scheduler, on purpose -- there is no `schedule:`
+# below, and adding one back is a decision, not a tidy-up.
 #
-# Read this before relying on it: an Actions runner is ephemeral, so the SQLite
-# file that IS the dedup layer has to be carried between runs in the cache. The
-# cache is best-effort. GitHub evicts entries after 7 days of no reads and when
-# the repo's 10 GB budget fills, and on a miss the pipeline starts from an empty
-# database -- every posting looks new, and you get a Telegram queue full of
-# roles you already reviewed. Annoying, not dangerous, but it is the reason
-# this is the fallback and not the deployment.
+# The pipeline runs on your own machine (`make daily`) or on the OCI box
+# (deploy/crontab). Two reasons this is not the place for it:
+#
+# 1. The SQLite file IS the dedup layer, and a runner is ephemeral, so it has to
+#    ride in the Actions cache. That cache is best-effort: GitHub evicts entries
+#    after 7 days of no reads and when the repo's 10 GB budget fills. On a miss
+#    the pipeline starts from an empty database -- every posting looks new, and
+#    Telegram fills with roles you already reviewed.
+# 2. It is the only option that needs your work history uploaded. profile.yaml
+#    and facts.yaml are gitignored because they name your employer; running here
+#    means putting ~48 KB of that into repository secrets on a public repo.
+#
+# Neither is fatal for a one-off catch-up run you are watching, which is exactly
+# what workflow_dispatch is for. Both are disqualifying for something unattended.
 #
 # Gmail works here now. The OAuth flow needed a browser once and a refresh
 # token written back after every rotation, which is why this used to say Gmail
@@ -19,17 +27,18 @@
 name: pipeline
 
 on:
-  schedule:
-    # 08:30 UTC = 14:00 IST, weekdays. UTC in cron, always.
-    #
-    # This deliberately runs in the EARLY AFTERNOON, not at breakfast. Google
-    # rolls the free-tier day at midnight America/Los_Angeles -- 07:00 UTC in
-    # PDT, 08:00 UTC in PST -- so an 01:30 UTC run (the old value) started on
-    # the PREVIOUS quota day and inherited whatever an evening session had
-    # already spent. 08:30 UTC is past the boundary in both halves of the year,
-    # so every run begins on a full quota.
-    - cron: "30 8 * * 1-5"
-  workflow_dispatch:            # and a manual button
+  # Manual only. There was a `schedule:` here (07:00 IST, then 14:00 IST) and it
+  # failed EVERY run from the day it was written to 2026-09-05 -- the config
+  # secrets were never set, so it exited at its first step without ever reaching
+  # the pipeline, and nobody noticed because a failing scheduled workflow is
+  # invisible unless you go looking.
+  #
+  # If you ever restore it: run after Google rolls the free-tier quota day at
+  # midnight America/Los_Angeles (07:00 UTC in PDT, 08:00 in PST), never at
+  # breakfast IST -- a 01:30 UTC run starts on the PREVIOUS quota day and
+  # inherits whatever the evening already spent. `cron: "30 8 * * 1-5"` is past
+  # the boundary in both halves of the year.
+  workflow_dispatch:
 
 concurrency:
   # The budget counter coordinates across processes on one box, not across
@@ -69,8 +78,11 @@ jobs:
           # repository secret of the same name.
           if [ -z "$PROFILE_YAML" ] || [ -z "$FACTS_YAML" ]; then
             echo "::error::PROFILE_YAML and/or FACTS_YAML repository secret is \
-          not set, so this scheduler has never actually run. From a checkout \
-          with your real config present, run: make arm-ci"
+          not set, so this run has nothing to work from. Paste each file into a \
+          secret of the same name at Settings > Secrets and variables > \
+          Actions, or run 'make arm-ci' from a checkout with your real config. \
+          Note this uploads your work history to GitHub -- that is why the \
+          pipeline normally runs locally or on the OCI box instead."
             exit 1
           fi
           printf '%s' "$PROFILE_YAML" > config/profile.yaml
