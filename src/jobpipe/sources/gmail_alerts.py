@@ -148,6 +148,37 @@ def _job_links(text: str) -> list[tuple[int, str]]:
             if any(h in m.group(0).lower() for h in link_hints())]
 
 
+# Glassdoor renders a posting heading as "<Company> <rating> * <Job title>",
+# so the title the model copies back carries the company name and a star
+# rating. Measured 2026-09-06: 20 rows, every one of them alert:glassdoor.
+#
+# It is deliberately NOT fixed in the prompt. The prompt asks for the title
+# verbatim because _match_link locates the posting's link by finding that exact
+# string in the email text (7.3), and only the verbatim string satisfies that
+# contract by construction. Stripping the chrome first would happen to work
+# while it is a prefix -- the remainder is still a substring of the email -- but
+# that is luck, not a guarantee, and a posting with no confident link is dropped
+# outright (7.3). So: match on the raw title, store the cleaned one.
+_STAR_HEADING = re.compile(r"^.*?\u2605\s*")
+
+
+def _clean_title(title: str) -> str:
+    """Strip Glassdoor's "<Company> <rating> *" prefix off a posting heading.
+
+    Not cosmetic. The polluted string is what `fingerprint()` hashes, so the
+    same Glassdoor job arriving twice -- once with the chrome, once without --
+    produced two rows and two prepared documents (observed live: same board, same
+    city). It is also what `title_reject` and the title-only `soft_penalty`
+    match against, and 7.18 moved those to the title precisely so that body
+    text could not trigger them; a company name sitting in the title reopens
+    that door. And it reaches the prepared document's header.
+    """
+    cleaned = _STAR_HEADING.sub("", title, count=1).strip()
+    # A heading that is nothing but chrome is not something we can improve on.
+    # Keep the original so a human sees the oddity rather than an empty title.
+    return cleaned or title.strip()
+
+
 def _match_link(title: str, text: str, links: list[tuple[int, str]],
                 claimed: set[str]) -> str:
     """The unclaimed posting link nearest to where this title appears."""
@@ -224,7 +255,10 @@ def fetch(log=print) -> list[dict]:
                 source=f"alert:{board}",
                 source_id=None,
                 company=j["company"],
-                title=j["title"],
+                # Raw title above for _match_link, cleaned title here for
+                # storage: the link match needs the verbatim string, the row
+                # must not keep the company name and star rating.
+                title=_clean_title(j["title"]),
                 location=j.get("location", ""),
                 url=url,
                 # Whatever blurb the email carried. Usually short and often
