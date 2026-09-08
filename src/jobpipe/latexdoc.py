@@ -265,7 +265,13 @@ def tagline(job_title: str, jd: str, rows: list[tuple[str, list[str]]],
 SEP = r" \textbullet\ "      # the template's separator; defined once so it never has
                                  # to survive being escaped as data
 
-PREAMBLE = r"""\documentclass[10pt, letterpaper]{article}
+# 14pt, and therefore extarticle rather than article. `article` only accepts
+# 10/11/12pt: passing [14pt] to it emits "Unused global option(s): [14pt]"
+# and SILENTLY falls back to 10pt, so the obvious one-word edit looks done
+# and changes nothing. extsizes' extarticle is the class that actually
+# honours it. Verified against a real compile: no unused-option warning,
+# and the body measures 14.35pt in the PDF against 9.96pt before.
+PREAMBLE = r"""\documentclass[14pt, letterpaper]{extarticle}
 \usepackage[top=0.55in, bottom=0.55in, left=0.70in, right=0.70in]{geometry}
 \usepackage{enumitem}
 \usepackage{titlesec}
