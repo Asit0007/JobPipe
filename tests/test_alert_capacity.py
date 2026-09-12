@@ -376,6 +376,14 @@ def test_a_tailor_that_produces_nothing_triggers_the_fallback(monkeypatch):
 
 
 def test_no_second_attempt_when_the_primary_tailor_worked(monkeypatch):
+    """A tailor that produced EVERYTHING asked for is not retried.
+
+    This test used to return 5 against a budget that asked for 10 and assert no
+    retry -- i.e. it encoded bug 7.49 as intended behaviour, because "worked"
+    was reading a partial failure as success. Retightened to the real boundary
+    rather than deleted: the property is sound, the number was wrong. The
+    partial case now has its own test below.
+    """
     from jobpipe import cli
 
     calls = []
@@ -385,7 +393,36 @@ def test_no_second_attempt_when_the_primary_tailor_worked(monkeypatch):
     monkeypatch.setattr(cli, "_pdf_all", lambda: None)
     monkeypatch.setattr(cli.db, "fetch", lambda **k: [object()] * 40)
     monkeypatch.setattr("jobpipe.llm.budget_remaining", lambda m=None: 20)
+    # 20 calls / 2 per job = 10 asked for; return all 10.
     monkeypatch.setattr("jobpipe.tailor.run",
-                        lambda limit=15, model=None, log=print: calls.append(model) or 5)
+                        lambda limit=15, model=None, log=print: calls.append(model) or 10)
     cli.cmd_daily()
     assert calls == [None], f"must not re-run a tailor that worked: {calls}"
+
+
+def test_a_PARTIAL_tailor_failure_DOES_retry_on_the_fallback(monkeypatch):
+    """Bug 7.49, end to end through cmd_daily.
+
+    Measured 2026-09-12: 1 document of 10 asked for, the rest lost to a 503
+    storm, and the fallback model's budget -- room for dozens more -- went
+    unspent because the condition read `written == 0`.
+    """
+    from jobpipe import cli
+
+    calls = []
+    for name in ("cmd_ingest", "cmd_score", "cmd_notify", "cmd_track",
+                 "cmd_status", "cmd_readme_stats"):
+        monkeypatch.setattr(cli, name, lambda: None)
+    monkeypatch.setattr(cli, "_pdf_all", lambda: None)
+    monkeypatch.setattr(cli.db, "fetch", lambda **k: [object()] * 40)
+    monkeypatch.setattr("jobpipe.llm.budget_remaining", lambda m=None: 20)
+    monkeypatch.setattr("jobpipe.config.MODEL_TAILOR", "gemini-flash-latest")
+
+    def fake_tailor(limit=15, model=None, log=print):
+        calls.append(model)
+        return 1 if model is None else 7      # 1 of 10, then the fallback works
+
+    monkeypatch.setattr("jobpipe.tailor.run", fake_tailor)
+    cli.cmd_daily()
+    assert len(calls) == 2, f"a partial failure must still fall back: {calls}"
+    assert calls[1] == cli.FALLBACK_TAILOR, calls

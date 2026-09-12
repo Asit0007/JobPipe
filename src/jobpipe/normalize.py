@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 
 from rapidfuzz import fuzz
 
@@ -32,11 +33,73 @@ def canon_title(title: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+# Same place, two spellings. Alert mail is the source that makes this matter --
+# the same requisition arrives from Indeed as "Bengaluru, Karnataka" and from
+# Glassdoor as "Bengaluru", and until 2026-09-12 those were two rows.
+_CITY_ALIASES = (
+    ("bengaluru", "bangalore"), ("gurugram", "gurgaon"), ("bombay", "mumbai"),
+    ("calcutta", "kolkata"), ("madras", "chennai"), ("trivandrum", "thiruvananthapuram"),
+    ("vizag", "visakhapatnam"), ("baroda", "vadodara"), ("poona", "pune"),
+)
+
+# Cities this search actually targets, AFTER aliasing. A location containing one
+# of these collapses to it for fingerprinting; anything else is left alone. See
+# canon_place() for why the list is a list and not a rule.
+_KNOWN_CITIES = (
+    "new delhi", "bangalore", "pune", "hyderabad", "chennai", "mumbai", "delhi",
+    "noida", "gurgaon", "kolkata", "ahmedabad", "jaipur", "indore", "coimbatore",
+    "kochi", "thiruvananthapuram", "bhubaneswar", "dehradun", "nagpur",
+    "chandigarh", "mysore", "visakhapatnam", "vadodara", "surat", "lucknow",
+    "bhopal", "nashik", "madurai",
+)
+
+
+def _strip_accents(s: str) -> str:
+    """Hyderabad and Hyderab\u0101d are the same city.
+
+    Measured 2026-09-12: Glassdoor mails the macron form, Indeed does not, and
+    the pair produced two rows for one MetLife requisition.
+    """
+    return "".join(c for c in unicodedata.normalize("NFKD", s)
+                   if not unicodedata.combining(c))
+
+
 def canon_location(loc: str) -> str:
-    s = (loc or "").lower()
-    s = s.replace("bengaluru", "bangalore").replace("gurugram", "gurgaon")
+    s = _strip_accents((loc or "").lower())
+    for alias, canonical in _CITY_ALIASES:
+        s = s.replace(alias, canonical)
     s = re.sub(r"[^\w\s]", " ", s)
     return re.sub(r"\s+", " ", s).strip()
+
+
+def canon_place(loc: str) -> str:
+    """The location key the fingerprint uses: a known city, else the string.
+
+    The problem this solves is administrative-suffix variance -- one job
+    reaching us as "Pune", "Pune, Maharashtra" and "Pune Division" from three
+    boards, which the raw canonical string hashes into three rows. Measured
+    2026-09-12: 30 such groups among the 502 rows that had reached the queue,
+    including an `applied` Heaptrace role whose Glassdoor twin was still sitting
+    `shortlisted` and would have spent tailor budget on a second document.
+
+    **Not `_city()`, which looks like it would do.** That takes the leading
+    token, which is right for the gate it was written for -- being wrong there
+    errs toward "different" and keeps both rows. In a fingerprint the error
+    reverses and silently merges: "San Francisco" and "San Diego" both lead with
+    "san". A known-city list cannot make that mistake, because a city it does
+    not recognise falls through unchanged. Measured, that is the difference
+    between merging 103 rows corpus-wide and merging 377.
+
+    Country-only locations are deliberately NOT folded into a city. "India" and
+    "Pune" stay two rows even for one company and title -- a nationwide or
+    remote posting is not the Pune one, and 7.4 is the record of what
+    over-eager location merging costs.
+    """
+    c = canon_location(loc)
+    for city in _KNOWN_CITIES:
+        if re.search(rf"\b{re.escape(city)}\b", c):
+            return city
+    return c[:20]
 
 
 def _city(loc: str) -> str:
@@ -51,7 +114,7 @@ def _city(loc: str) -> str:
 
 
 def fingerprint(company: str, title: str, location: str) -> str:
-    key = f"{canon_company(company)}|{canon_title(title)}|{canon_location(location)[:20]}"
+    key = f"{canon_company(company)}|{canon_title(title)}|{canon_place(location)}"
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 

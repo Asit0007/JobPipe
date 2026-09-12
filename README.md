@@ -82,7 +82,7 @@ a model:
 | killed on title | -3,260 | sales roles whose JD lists your whole toolchain |
 | killed on hard rejects | -641 | seniority, shift work, geography |
 | **reach an LLM call** | **2,944** | 24% - *this is what protects the free tier* |
-| shortlisted | **415** | above `shortlist_min_score` |
+| shortlisted | **387** | above `shortlist_min_score` |
 | **queued for you** | 15/day cap | because volume is not the goal |
 <!-- funnel:end -->
 

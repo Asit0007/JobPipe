@@ -452,6 +452,33 @@ def cmd_notify():
 FALLBACK_TAILOR = "gemini-flash-lite-latest"
 
 
+
+def fallback_room(written: int, asked: int, fb_left: int, target: int) -> int:
+    """How many jobs to retry on the fallback tailor model. 0 means don't.
+
+    This is bug 7.49, and the whole bug was the first line. It read
+    `written == 0`: fall back only when the primary model produced NOTHING.
+
+    Measured twice, and both times the primary produced *something* and then
+    died -- 2 of 10 on 2026-09-05, 1 of 10 on 2026-09-12, each time on a run of
+    consecutive 503s that burned all 20 of gemini-flash-latest's daily calls.
+    `written == 0` was False, so the fallback never ran, and ~90 flash-lite
+    calls sat unused against hundreds of shortlisted rows. Both of the last two
+    `daily` runs to reach `prepare` hit it.
+
+    `written < asked` subsumes the zero case, so nothing that used to trigger
+    stops triggering. The count `tailor.run()` returns was always correct; what
+    read it was not -- the same shape as 7.28 (counter vs quota day) and 7.33
+    (counter vs cap).
+
+    The room is the SHORTFALL against the day's target, not the target: a
+    partial success tops the day up rather than restarting the count, so a run
+    that wrote 1 of 10 asks the fallback for at most target-1 more.
+    """
+    if written >= asked:
+        return 0
+    return max(0, min(fb_left // 2, target - written))
+
 def cmd_daily():
     """The whole day's run, in the order the data flows. `cli daily`
 
@@ -501,22 +528,41 @@ def cmd_daily():
         affordable = left // 2          # tailor call + screening call per job
         print(f"  {shortlisted} shortlisted; {MODEL_TAILOR} has {left} call(s) "
               f"left -> room for {affordable} job(s)")
+        asked = min(affordable, shortlisted)
         written = 0
         if affordable >= 1:
             written = stage("prepare", lambda: tailor_run(limit=affordable)) or 0
-        # Zero written with jobs waiting means the model is unavailable, not
-        # that there was nothing to do -- that distinction is why run() returns
-        # a count. Retry once on the model with quota, never in a loop.
-        if written == 0 and MODEL_TAILOR != FALLBACK_TAILOR:
+        # FEWER written than asked for -- not merely zero -- means the model is
+        # unavailable for the rest, not that there was nothing to do. That
+        # distinction is why run() returns a count.
+        #
+        # This read `written == 0` and that was bug 7.49, measured twice. On
+        # 2026-09-05 five straight 503s burned all 20 of flash-latest's daily
+        # calls and produced 2 of 10; on 2026-09-12, 1 of 10. Both times the
+        # condition was False, the fallback never ran, and ~90 flash-lite calls
+        # -- room for dozens of jobs -- sat unused against hundreds of
+        # shortlisted rows. The signal was right and the threshold reading it
+        # was wrong, which is 7.28 and 7.33's shape a third time.
+        #
+        # `written < asked` subsumes the zero case, so nothing that used to
+        # trigger stops triggering. Retry once on the model with quota, never
+        # in a loop.
+        if MODEL_TAILOR != FALLBACK_TAILOR:
             fb_left = llm.budget_remaining(FALLBACK_TAILOR)
-            fb_room = min(fb_left // 2, 15)
+            # Read the target from notify_daily_cap rather than repeating the
+            # 15: more documents than notify will queue is work nobody sees,
+            # and two copies of one number is how 7.50 happened.
+            fb_room = fallback_room(
+                written, asked, fb_left,
+                profile()["thresholds"]["notify_daily_cap"])
             if fb_room >= 1:
-                print(f"  ! {MODEL_TAILOR} produced nothing. Falling back to "
-                      f"{FALLBACK_TAILOR} ({fb_left} left -> {fb_room} job(s))")
-                written = stage("prepare (fallback)",
-                                lambda: tailor_run(limit=fb_room,
-                                                   model=FALLBACK_TAILOR)) or 0
-            else:
+                print(f"  ! {MODEL_TAILOR} produced {written} of {asked}. "
+                      f"Falling back to {FALLBACK_TAILOR} "
+                      f"({fb_left} left -> {fb_room} job(s))")
+                written += stage("prepare (fallback)",
+                                 lambda: tailor_run(limit=fb_room,
+                                                    model=FALLBACK_TAILOR)) or 0
+            elif written < asked:
                 print(f"  ! no budget left on {FALLBACK_TAILOR} either")
         print(f"  prepared {written} document(s)")
 
