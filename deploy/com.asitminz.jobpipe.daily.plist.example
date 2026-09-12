@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily run on a macOS laptop.
+
+  Build the launcher bundle first - deploy/build-launcher.sh - then copy this
+  to ~/Library/LaunchAgents/, replacing __REPO_ROOT__ with this repo's absolute
+  path and __HOME__ with your home directory, then:
+
+      launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.asitminz.jobpipe.daily.plist
+      launchctl print gui/$(id -u)/com.asitminz.jobpipe.daily   # verify
+      launchctl kickstart -p gui/$(id -u)/com.asitminz.jobpipe.daily   # run it now
+
+  To remove:
+      launchctl bootout gui/$(id -u)/com.asitminz.jobpipe.daily
+
+  WHY launchd AND NOT cron, on a laptop: cron fires at 12:35 or not at all. If
+  the lid is shut the run is simply lost, and nothing says so. launchd runs a
+  missed StartCalendarInterval job on the next wake instead, which is the whole
+  difference between a schedule and a schedule that happens.
+
+  BUT ONLY ASLEEP, NOT POWERED OFF - measured 2026-09-12 and see CLAUDE.md 7.58.
+  This Mac was shut down from Sep 11 08:12 to Sep 12 21:44; 12:35 passed twice
+  and launchd replayed NEITHER firing - runs = 0 seven minutes after boot, no
+  dated log for either day. A machine that gets shut down has no scheduler, and
+  the symptom is runs = 0, which looks exactly like a job that was never
+  installed. Check `runs` and data/logs/daily-<date>.log, never `state`.
+
+  THE TIME IS 12:35 AND IT IS LOAD-BEARING - see deploy/crontab, which says
+  this at length. Google rolls the free-tier quota day at midnight
+  America/Los_Angeles: 12:30 IST while the US is on PDT, 13:30 IST on PST.
+  12:35 sits five minutes past the boundary in summer. From the PST switch in
+  early November it sits fifty-five minutes SHORT of it, and the run will start
+  on the previous quota day - on gemini-flash-latest, cap 20 calls, that is
+  routinely a quota an evening session already spent. Move Minute/Hour to 13:35
+  then, or add a second dict to StartCalendarInterval and let the wrapper's
+  quota-day line in the log tell you which firing did the work.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.asitminz.jobpipe.daily</string>
+
+    <!-- NOT run-daily.sh directly, and not /bin/bash either. macOS TCC guards
+         ~/Documents and launchd has no grant there: measured 2026-09-10, it
+         could not list the repo, read .env or the DB, or even exec the script
+         (exit 126), while the same script from Terminal was fine. A grant has
+         to attach to a code identity, so it attaches to this bundle - built by
+         deploy/build-launcher.sh, granted once in System Settings > Privacy &
+         Security > Full Disk Access. Children inherit the attribution, which
+         is how the venv python underneath ends up able to read the repo. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/Applications/JobPipe Daily.app/Contents/MacOS/JobPipeDaily</string>
+        <!-- Explicit, never defaulted. run-daily.sh refuses to run with no
+             command precisely so that a stray LaunchServices launch of the
+             bundle - a double-click, Spotlight, or adding it to a Privacy pane,
+             which launches it - cannot fire an unattended pipeline run. -->
+        <string>daily</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>12</integer>
+        <key>Minute</key>
+        <integer>35</integer>
+    </dict>
+
+    <!-- Homebrew is not on launchd's PATH and tectonic lives there; without
+         this the pdf stage finds no engine and skips without failing. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+    </dict>
+
+    <!-- The run's own output goes to data/logs/daily-<date>.log; these two
+         catch what fails BEFORE the wrapper can log anything. -->
+    <key>StandardOutPath</key>
+    <string>__REPO_ROOT__/data/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO_ROOT__/data/logs/launchd.err.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

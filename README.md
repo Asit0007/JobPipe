@@ -77,12 +77,12 @@ a model:
 <!-- funnel:start -->
 | stage | count | |
 |---|---:|---|
-| ingested | **11,152** | 10 sources, deduplicated |
-| killed on keywords | -4,869 | fewer than 2 must-haves present |
-| killed on title | -3,034 | sales roles whose JD lists your whole toolchain |
-| killed on hard rejects | -608 | seniority, shift work, geography |
-| **reach an LLM call** | **2,641** | 23% - *this is what protects the free tier* |
-| shortlisted | **349** | above `shortlist_min_score` |
+| ingested | **12,218** | 10 sources, deduplicated |
+| killed on keywords | -5,373 | fewer than 2 must-haves present |
+| killed on title | -3,260 | sales roles whose JD lists your whole toolchain |
+| killed on hard rejects | -641 | seniority, shift work, geography |
+| **reach an LLM call** | **2,944** | 24% - *this is what protects the free tier* |
+| shortlisted | **415** | above `shortlist_min_score` |
 | **queued for you** | 15/day cap | because volume is not the goal |
 <!-- funnel:end -->
 
@@ -491,6 +491,62 @@ already review from. No infrastructure, the database is a file on your disk, and
 nothing leaves the box but the API calls. This is the default, and for one person
 applying to fifteen roles a day it is usually the right answer.
 
+### Scheduling that on a Mac
+
+```bash
+./deploy/build-launcher.sh                     # build the launcher app, once
+cp deploy/com.asitminz.jobpipe.daily.plist.example \
+   ~/Library/LaunchAgents/com.asitminz.jobpipe.daily.plist
+# replace __REPO_ROOT__ and __HOME__ in that file, then:
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.asitminz.jobpipe.daily.plist
+```
+
+**launchd, not `cron`.** A laptop is usually asleep at the scheduled minute, and
+cron simply drops that run — no catch-up, no error, nothing to notice. launchd
+runs a missed `StartCalendarInterval` job on the next wake.
+
+**Asleep, not powered off — and the difference is the whole schedule.** Measured
+2026-09-12 on the machine this was built for: it was shut down for 37 hours, so
+12:35 passed twice with the power off. launchd replayed **neither** firing —
+`runs = 0` seven minutes after the next boot, and no `data/logs/daily-<date>.log`
+for either day. So the catch-up above covers a shut lid and nothing more, and a
+machine that gets shut down is, for scheduling purposes, a machine with no
+scheduler. That is the argument for the always-on box, and it is the reason to
+read `status` rather than trust the schedule: **`runs = 0` is the symptom, and
+it looks identical to a job that was never installed.**
+
+**Two things will otherwise fail silently, both measured on macOS 14:**
+
+- **Your repo is probably inside `~/Documents`, which macOS guards with TCC, and
+  launchd has no grant there.** Measured: a LaunchAgent could not list the repo,
+  read `.env` or the database, or even `exec` the run script — exit **126** —
+  while the identical script from Terminal ran fine, because Terminal holds a
+  Documents-folder grant and launchd does not. `cron` fails identically; this is
+  not a launchd quirk. A grant has to attach to a code identity, so
+  `deploy/build-launcher.sh` builds one: a tiny ad-hoc-signed Mach-O in
+  `~/Applications/JobPipe Daily.app` whose only job is to `exec`
+  `deploy/run-daily.sh`. Add **that app** under *System Settings → Privacy &
+  Security → Full Disk Access*; children inherit the attribution, which is how
+  the venv python underneath ends up able to read the repo. It has to be
+  compiled — a shell script with a shebang puts the grant back on `/bin/bash`,
+  handing full disk access to every background shell on the machine.
+- **`tectonic` lives in Homebrew, which is not on launchd's `PATH`**
+  (`/usr/bin:/bin:/usr/sbin:/sbin`). The pdf stage tolerates a missing engine on
+  purpose, so PDFs would just stop appearing with no error at all.
+  `deploy/run-daily.sh` prepends `/opt/homebrew/bin`, sets `PYTHONUNBUFFERED=1`
+  — a killed run that cannot say how far it got is the worst kind — and writes
+  `data/logs/daily-<date>.log`, stamped with the Pacific quota date, pruned at
+  30 days.
+
+**The launcher takes its command explicitly and refuses to default.** Adding the
+app to a Privacy pane *launches* it, and while it still defaulted to `daily` that
+fired a full unattended pipeline run. The LaunchAgent passes `daily`; nothing
+else can imply it.
+
+**Pick the hour the same way the OCI crontab does.** 12:35 sits five minutes past
+the quota roll while the US is on PDT and fifty-five minutes *short* of it on
+PST; 14:00 is past the boundary in both halves of the year.
+
 **GitHub Actions is a manual escape hatch, not a scheduler.**
 `.github/workflows/pipeline.yml` is `workflow_dispatch` only, deliberately:
 
@@ -584,13 +640,14 @@ src/jobpipe/
   review_api.py           dashboard; the sole writer of status=applied
 
 deploy/                   OCI setup, crontab, cloudflared example
+                          run-daily.sh + launcher app + LaunchAgent for macOS
 ```
 
 **Stack** — Python 3.12 · SQLite · httpx · FastAPI · Gemini (raw REST) ·
 rapidfuzz · Docker Compose · Cloudflare Tunnel
 
 ```bash
-make test          # 91 tests
+make test          # 287 tests
 ```
 
 ---
