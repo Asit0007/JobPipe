@@ -17,6 +17,8 @@ worse than having no URL at all.
 from __future__ import annotations
 
 import re
+from urllib.parse import (parse_qs, parse_qsl, unquote, urlencode,
+                          urlparse, urlunparse)
 from collections import Counter
 
 from ..config import MODEL_SCORE, env, env_int
@@ -81,7 +83,10 @@ JOB_LINK_HINTS = ("linkedin.com/jobs/view", "naukri.com/job-listings", "indeed.c
                   "indeed.com/viewjob", "linkedin.com/comm/jobs/view",
                   "glassdoor.com/job-listing", "glassdoor.co.in/job-listing",
                   "glassdoor.com/partner/joblisting",
-                  "glassdoor.co.in/partner/joblisting")
+                  "glassdoor.co.in/partner/joblisting",
+                  # The UNWRAPPED foundit target -- see _unwrap. Measured off a
+                  # real alert on 2026-09-13, never guessed (7.35).
+                  "foundit.in/job/")
 
 # How far from a title a link may sit and still be considered its link. Anchor
 # markup puts the href just before the visible text, so the window is asymmetric
@@ -142,10 +147,76 @@ EMAIL:
 """
 
 
+# Portals that mail a tracking or auto-login wrapper with the real posting URL
+# carried inside a query parameter. Measured 2026-09-13 on foundit (ex-Monster
+# India), whose every link is:
+#
+#   foundit.in/rio/autoLogin/seeker/<base64>?return_url=https%3A%2F%2F...%2Fjob%2F66795517
+#
+# Unwrapping matters for two separate reasons, and the second is the important
+# one:
+#
+#   * the real URL only exists percent-encoded, so NO plain hint can match it
+#     and every foundit posting was dropped -- 10 emails on 09-11, 7 more on
+#     09-13, all reported as "no recognisable posting link";
+#   * that wrapper is an AUTO-LOGIN MAGIC LINK for the user's account. Matching
+#     on it would store a working credential in jobs.apply_url, in every
+#     prepared .md, and in the encrypted static export. A job link must never
+#     be a session token.
+_WRAPPED_PARAMS = ("return_url", "returnurl", "redirect", "redirect_uri", "url", "target")
+
+
+# Parameters that ask the PORTAL to act rather than just display. foundit
+# mails ...&autoApply=true, and §2 is the one rule in this codebase that
+# overrides everything: nothing here may submit an application. A stored link
+# that could submit on click is that rule failing through the one door left
+# open -- the human's own browser. Stripped from every extracted link.
+_ACTION_PARAMS = ("autoapply", "auto_apply", "applynow", "apply_now", "quickapply")
+
+
+def _disarm(url: str) -> str:
+    """Drop query parameters that could make the portal apply on our behalf."""
+    try:
+        parts = urlparse(url)
+        kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                if k.lower() not in _ACTION_PARAMS]
+    except ValueError:
+        return url
+    return urlunparse(parts._replace(query=urlencode(kept)))
+
+
+def _unwrap(url: str) -> str:
+    """The real destination of a tracking/auto-login wrapper, else the url.
+
+    Only ever unwraps to an http(s) URL, and only one level: a parameter that
+    holds something else is left alone rather than guessed at. The result is
+    disarmed either way -- an un-wrapped link can carry an action param too.
+    """
+    try:
+        q = parse_qs(urlparse(url).query)
+    except ValueError:
+        return url
+    for key in _WRAPPED_PARAMS:
+        for value in q.get(key, []):
+            inner = unquote(value).strip()
+            if inner.lower().startswith(("http://", "https://")):
+                return _disarm(inner)
+    return _disarm(url)
+
+
 def _job_links(text: str) -> list[tuple[int, str]]:
-    """Every posting link, with where it sits in the text. Order preserved."""
-    return [(m.start(), m.group(0)) for m in LINK_RE.finditer(text)
-            if any(h in m.group(0).lower() for h in link_hints())]
+    """Every posting link, with where it sits in the text. Order preserved.
+
+    The POSITION is the raw match's, not the unwrapped URL's -- _match_link
+    pairs a title to a link by distance in the email text (7.3), so the offset
+    has to stay the one the text actually has.
+    """
+    out = []
+    for m in LINK_RE.finditer(text):
+        url = _unwrap(m.group(0))
+        if any(h in url.lower() for h in link_hints()):
+            out.append((m.start(), url))
+    return out
 
 
 # Glassdoor renders a posting heading as "<Company> <rating> * <Job title>",
