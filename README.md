@@ -162,6 +162,50 @@ skill_rows:
 gates a row on JD terms, the way certifications already work. Write these once,
 as prose you would defend; the generator never paraphrases them.
 
+### One application per company
+
+Applying to a company starts a **90-day clock**. Another role there is reported
+with the date you applied, what you applied for, and when the company is worth
+approaching again:
+
+```
+COOLDOWN - applied to Cloudflare on 2026-09-09 (Systems Engineer);
+           next allowed 2026-12-08, 86 day(s) left
+```
+
+**It never blocks the role.** The posting still scores, still gets a tailored
+document, still reaches your queue — the cooldown is reported beside it and you
+decide. A filter that silently removes a job is indistinguishable from a
+pipeline that found nothing, which is a failure this codebase has had too many
+times to add another one deliberately.
+
+The warning reaches every surface a role can be seen on: the Telegram message,
+the review dashboard, the hosted queue, and the prepared `.md` itself. They all
+render it through one function, so they cannot drift apart.
+
+A second, separate signal covers work in flight:
+
+```
+IN YOUR QUEUE - Luxoft "Azure DevOps Engineer" is already queued and not yet applied
+```
+
+That is not a cooldown — it means you are about to prepare a second document
+for a company whose first one you have not sent. Different problem, different
+action, so it gets different words.
+
+```bash
+make cooldowns    # every company you have applied to, and when each frees up
+```
+
+Companies are matched canonically, so `Infosys`, `INFOSYS` and
+`Infosys Limited` are one company. The window is
+`thresholds.company_cooldown_days` in `profile.yaml`.
+
+**Applications you made outside the pipeline** — a referral, a direct email, a
+recruiter — go in `config/applied_companies.yaml` (gitignored; copy the
+`.example`). Those are the ones you are most likely to forget, because there is
+no row to look at and nothing to click.
+
 ### Questions it refuses to answer for you
 
 Notice period, current CTC, expected CTC, relocation, reason for leaving.
@@ -621,7 +665,8 @@ free quota.
 
 ```
 config/profile.yaml       search definition, three reject lists, thresholds
-config/facts.yaml         the verified-fact menu — the anti-hallucination boundary
+config/facts.yaml         the verified-fact menu
+config/applied_companies.yaml  companies applied to outside the pipeline — the anti-hallucination boundary
                           also: skill_rows, never_claim, blockers, per-project use_when
 config/companies.yaml     ATS slugs (the part you maintain by hand)
 scripts/doctor.py         preflight: key, tier, models, config, integrations

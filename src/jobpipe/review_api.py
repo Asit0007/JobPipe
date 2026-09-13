@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from . import db
+from . import cooldown, db
 from .config import TEMPLATE_DIR
 from .db import now
 
@@ -36,6 +36,7 @@ def index():
 @app.get("/api/queue")
 def queue():
     out = []
+    applied_idx, flight_idx = cooldown.applied_index(), cooldown.in_flight_index()
     for status in ("queued", "prepared"):
         for r in db.fetch(status=status, limit=50):
             prep = ""
@@ -48,6 +49,9 @@ def queue():
                 "missing": json.loads(r["missing_skills"] or "[]"),
                 "flags": json.loads(r["red_flags"] or "[]"),
                 "source": r["source"], "prep": prep,
+                "cooldown": cooldown.check(r["company"], job_id=r["id"],
+                                           applied=applied_idx,
+                                           in_flight=flight_idx),
             })
     out.sort(key=lambda x: x["score"] or 0, reverse=True)
     return JSONResponse(out)

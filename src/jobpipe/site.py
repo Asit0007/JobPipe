@@ -43,7 +43,7 @@ import json
 import re
 from pathlib import Path
 
-from . import db
+from . import cooldown, db
 from .config import OUT_DIR, ROOT, TEMPLATE_DIR
 
 # OWASP's floor for PBKDF2-SHA256 is 600k. The cost is paid once per unlock, in
@@ -252,6 +252,7 @@ def build(log=print, out_dir: Path | None = None,
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     jobs = []
+    applied_idx, flight_idx = cooldown.applied_index(), cooldown.in_flight_index()
     for status in ("queued", "prepared"):
         for r in db.fetch(status=status, limit=200):
             prep = ""
@@ -270,6 +271,9 @@ def build(log=print, out_dir: Path | None = None,
                 "missing": json.loads(r["missing_skills"] or "[]"),
                 "flags": json.loads(r["red_flags"] or "[]"),
                 "source": r["source"], "prep": prep,
+                "cooldown": cooldown.check(r["company"], job_id=r["id"],
+                                           applied=applied_idx,
+                                           in_flight=flight_idx),
             })
     jobs.sort(key=lambda x: x["score"] or 0, reverse=True)
 

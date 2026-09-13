@@ -1,0 +1,30 @@
+# Applications you made OUTSIDE JobPipe.
+#
+# The cooldown reads your `applied` rows from the database automatically, so
+# anything you marked applied in the review dashboard is already covered and
+# does NOT belong here. This file is for the ones the pipeline never saw: a
+# referral, a direct email, a recruiter conversation, a form on the company's
+# own careers page.
+#
+# Those are exactly the applications you are most likely to forget -- there is
+# no row to look at and nothing to click.
+#
+# `company` is matched canonically, so suffixes and case do not matter:
+# "Infosys Limited", "INFOSYS" and "Infosys" are the same company. `applied` is
+# the date the clock runs from; without one the company is flagged permanently
+# (deliberately -- an unknown date should warn, not go quiet).
+#
+#   cp config/applied_companies.example.yaml config/applied_companies.yaml
+#
+# The real file is gitignored: it is your job hunt.
+
+applied:
+  # - company: Acme Cloud Systems Pvt Ltd
+  #   applied: 2026-08-14
+  #   role: Senior DevOps Engineer
+  #   note: referred by a former colleague, applied over email
+  #
+  # - company: Example Corp
+  #   applied: 2026-07-02
+  #   role: Platform Engineer
+  #   note: recruiter reached out on LinkedIn

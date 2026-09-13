@@ -56,6 +56,12 @@
         padding:3px 7px;border:1px solid var(--rule);color:var(--muted)}
   .chip--gap{border-color:#4A3C22;color:var(--signal)}
   .chip--flag{border-color:#4A2A2A;color:#C97A7A}
+  /* Deliberately not a chip. Chips are scanned past; this is the one thing
+     that should stop you before you read the role. */
+  .cool{margin:10px 0 0;padding:8px 11px;border-radius:6px;font-size:12.5px;
+        line-height:1.45;border:1px solid #5A4420;background:#2A2114;color:#E0B87A}
+  .cool--queue{border-color:#1F4450;background:#12262D;color:#8FC7D8}
+  .cool b{font-weight:600}
 
   .actions{display:flex;gap:8px;padding:0 18px 16px;flex-wrap:wrap}
   button,a.btn{font-family:var(--mono);font-size:11px;letter-spacing:.1em;
@@ -104,6 +110,28 @@ const list = document.getElementById('list');
 
 function tier(s){ return s >= 80 ? 't-hi' : s >= 68 ? 't-mid' : 't-lo'; }
 
+// Nothing here blocks a role -- the cooldown is reported and you decide.
+// `cooldown` and `in_queue` are separate states on purpose: the first means
+// you already applied to this company, the second that a document for it is
+// sitting unsent, and those call for different actions.
+function coolBanner(c){
+  if(!c) return '';
+  const esc = t => String(t==null?'':t).replace(/[&<>"]/g,
+    m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+  if(c.kind === 'cooldown'){
+    const how = c.manual ? 'recorded by hand' : 'applied';
+    const when = c.applied ? ` on ${esc(c.applied)}` : '';
+    const role = c.role ? ` &mdash; ${esc(c.role)}` : '';
+    const until = c.until
+      ? `Next one worth sending <b>${esc(c.until)}</b> (${c.days_left} days).`
+      : 'No date recorded, so no expiry can be worked out.';
+    return `<p class="cool">You ${how} to <b>${esc(c.company)}</b>${when}${role}.
+            ${until}</p>`;
+  }
+  return `<p class="cool cool--queue">A document for <b>${esc(c.company)}</b>
+          (${esc(c.role)}) is already <b>${esc(c.status)}</b> and not yet sent.</p>`;
+}
+
 function card(j){
   const el = document.createElement('article');
   el.className = 'job';
@@ -125,6 +153,7 @@ function card(j){
         <div class="co">${j.company} <span>&middot; ${j.location||'location not stated'}</span></div>
         <div class="reason">${j.reason||''}</div>
         <div class="chips">${gaps}${flags}</div>
+        ${coolBanner(j.cooldown)}
       </div>
     </div>
     <div class="actions">

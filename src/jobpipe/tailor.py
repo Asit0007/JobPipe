@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import db, render, screening
+from . import cooldown, db, render, screening
 from .config import MODEL_TAILOR, OUT_DIR, facts
 from .llm import QuotaExhausted, generate_json
 
@@ -223,6 +223,14 @@ def _render(job, out, kept, rejected, screen: dict | None = None, flags: dict | 
         f"# {job['title']}", f"**{job['company']}** - {job['location'] or 'n/a'}",
         f"Fit score: **{job['score']}** - {job['score_reason']}",
         f"\nApply: {job['apply_url'] or job['url']}",
+    ]
+    # High in the document on purpose: this is the one thing that should stop
+    # you before you read the rest. A never-blocking flag is only useful if it
+    # is impossible to miss.
+    warn = cooldown.line(cooldown.check(job["company"], job_id=job["id"]))
+    if warn:
+        lines.append(f"\n> **{warn}**")
+    lines += [
         "\n---\n", "## Summary", out.get("summary", ""),
         "\n## Tailored bullets\n",
     ]

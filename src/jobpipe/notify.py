@@ -9,7 +9,7 @@ import json
 
 import httpx
 
-from . import db
+from . import cooldown, db
 from .config import env, profile
 from .db import now
 
@@ -38,6 +38,10 @@ def run(log=print) -> None:
 
     _send(f"*{len(rows)} roles ready for review* - {now()[:10]}\nYou apply. I don't.")
 
+    # Built once for the whole batch: check() would otherwise re-read the
+    # applied and in-flight tables for every message.
+    applied_idx, flight_idx = cooldown.applied_index(), cooldown.in_flight_index()
+
     for job in rows:
         missing = json.loads(job["missing_skills"] or "[]")
         flags = json.loads(job["red_flags"] or "[]")
@@ -50,6 +54,13 @@ def run(log=print) -> None:
             msg += f"\nGaps: {', '.join(missing[:4])}"
         if flags:
             msg += f"\nFlags: {', '.join(flags[:2])}"
+        # Telegram is where a role is seen FIRST, so a warning missing here is
+        # a warning that arrives too late to change anything.
+        warn = cooldown.line(cooldown.check(
+            job["company"], job_id=job["id"],
+            applied=applied_idx, in_flight=flight_idx))
+        if warn:
+            msg += f"\n\n*{warn}*"
         msg += f"\n\n[Open posting]({job['apply_url'] or job['url']})"
         if _send(msg):
             db.update(job["id"], status="queued", notified_at=now())

@@ -615,6 +615,49 @@ def cmd_track():
     run()
 
 
+
+def cmd_cooldowns():
+    """The company database: who you have applied to, and when you are free.
+
+    `cli.py cooldowns [--all]` -- by default only companies still inside the
+    window; --all lists every company you have ever applied to.
+    """
+    import datetime as dt
+    from . import cooldown
+
+    show_all = "--all" in sys.argv
+    today = dt.date.today()
+    days = cooldown.cooldown_days()
+    index = cooldown.applied_index()
+    if not index:
+        print("no applications recorded yet")
+        return
+
+    rows = []
+    for entry in index.values():
+        when = entry["applied"]
+        until = when + dt.timedelta(days=days) if when else None
+        left = (until - today).days if until else None
+        if not show_all and until and until <= today:
+            continue
+        rows.append((when, until, left, entry))
+    rows.sort(key=lambda r: (r[1] or dt.date.max))
+
+    print(f"{len(rows)} company(ies)  |  cooldown {days} days  |  "
+          f"{len(index)} applied to in total")
+    print(f"{'company':<34} {'applied':<11} {'free on':<11} {'left':>5}  role")
+    for when, until, left, e in rows:
+        tag = "" if not e.get("manual") else "  (by hand)"
+        state = f"{left:>5}" if left is not None and left > 0 else "  now"
+        print(f"{e['company'][:33]:<34} {str(when or '?'):<11} "
+              f"{str(until or '?'):<11} {state}  {e['role'][:38]}{tag}")
+
+    flight = cooldown.in_flight_index()
+    if flight:
+        print(f"\n{len(flight)} company(ies) with an unsent document:")
+        for e in flight.values():
+            print(f"  {e['company'][:33]:<34} {e['status']:<9} {e['role'][:40]}")
+
 def cmd_status():
     from .llm import budget_by_model, budget_remaining
     with db.connect() as c:

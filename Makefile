@@ -1,4 +1,4 @@
-.PHONY: help install config doctor verify ingest fetch-jd score daily prepare tex pdf rescreen site deploy verify-deploy readme-stats claims notify track review status test all gmail-auth gmail-imap-check telegram-check arm-ci
+.PHONY: cooldowns help install config doctor verify ingest fetch-jd score daily prepare tex pdf rescreen site deploy verify-deploy readme-stats claims notify track review status test all gmail-auth gmail-imap-check telegram-check arm-ci
 
 PY ?= python3
 CLI := $(PY) -m jobpipe.cli
@@ -102,6 +102,9 @@ notify:      ## push today's review queue to Telegram
 
 track:       ## parse Gmail for replies, update statuses, flag follow-ups
 	$(CLI) track
+
+cooldowns:   ## companies you have applied to, and when each is free again (free)
+	$(CLI) cooldowns
 
 status:      ## pipeline counts + remaining LLM budget
 	$(CLI) status
