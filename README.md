@@ -456,6 +456,15 @@ stays its only writer, so those buttons are removed rather than shipped inert.
 Read the queue and the prepared documents anywhere; record the outcome with
 `make review` at your desk.
 
+**`notify` reports deliveries, not attempts**, and the difference is not
+pedantry. Telegram's legacy Markdown treats `_` as italic, so a real job title —
+`Linux Administration_94357` — opened a run that never closed and the API
+answered `400 can't parse entities`. The document stayed `prepared` with no
+`notified_at` while the run printed *"queued 15 for review"*. Interpolated
+values are escaped now, a message that still cannot be formatted is retried as
+plain text rather than dropped, and the count is of messages that actually
+arrived.
+
 A blank passphrase exits non-zero and the Makefile checks for ciphertext on disk
 before invoking any deploy — two independent gates, because the earlier
 filename-based safeguard was not one.
