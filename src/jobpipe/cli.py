@@ -373,13 +373,20 @@ def cmd_pdf():
             print(f"  ! {tex.name}: {detail}")
             failed += 1
             continue
-        # The template's checklist asks for one page. The engine already counted,
-        # so answer it rather than leaving a box to eyeball.
-        # Two pages is the expected shape now that the skill rows carry the
-        # master resume's full inventory. Three is a signal to cut.
+        # The engine already counted, so answer the template's page question
+        # rather than leaving a box to eyeball.
+        #
+        # THREE is the expected shape since 2026-09-08, when the body was set
+        # to 14pt (b902ef9) and extarticle made the option stick. Asit chose
+        # 14pt deliberately on 2026-09-13; the threshold is what moved, not the
+        # font. Before that it warned past two, which after the font change
+        # meant it fired on 101 of 101 documents -- and a warning with no
+        # negative case is not a signal, it is decoration that teaches you to
+        # skip the line.
+        limit = profile()["thresholds"].get("max_resume_pages", 3)
         note = "" if pages in (None, 1) else f"  ({pages} pages)"
-        if pages and pages > 2:
-            note += "  <- over two pages, trim"
+        if pages and pages > limit:
+            note += f"  <- over {limit} pages, trim"
         print(f"  {tex.with_suffix('.pdf').name}{note}")
         made += 1
     parts = [f"{made} PDF(s) written by {engine}"]

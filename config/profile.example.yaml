@@ -99,6 +99,9 @@ thresholds:
   shortlist_min_score: 68     # below this, never enters the review queue
   notify_daily_cap: 15        # hard cap. Volume is not the goal.
   stale_after_days: 21        # postings older than this are skipped and archived
+  max_resume_pages: 3        # the shape at a 14pt body. cli pdf reads
+                             # the count out of the engine's own log
+                             # and only warns past this.
   company_cooldown_days: 90   # after applying to a company, how long before
                               # another role there is worth taking. Reported
                               # beside the role, never enforced -- you decide.

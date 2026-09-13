@@ -476,7 +476,7 @@ def render(doc: dict, cfg: dict | None = None) -> str:
             L.append(rf"  \item {tex(c.get('name', ''))}{tex(suffix)}")
         for c in held:
             L.append(rf"  % \item {tex(c.get('name', ''))}   "
-                     rf"<- held back to keep this to one page; swap in if it fits")
+                     rf"<- held back as filler; swap in if the page has room")
         L += [r"\end{itemize}", ""]
 
     L += [r"\end{document}", "", _footer(doc, idx, cfg, words)]
@@ -597,7 +597,8 @@ def _footer(doc: dict, idx: dict, cfg: dict, words: int) -> str:
           "%  [ ] No visible gap disclaimers in the body; max ONE bridge phrase",
           "%  [ ] No arrow, greater-than or pipe inside skill or bullet content",
           "%  [ ] No personal pronouns (I, my, me)",
-          "%  [ ] Fits on ONE page (two only if the role genuinely warrants it)",
+          "%  [ ] Fits within three pages (the shape at 14pt; see profile.yaml",
+          "%      thresholds.max_resume_pages -- cli pdf measures it for you)",
           "%  MECHANICS",
           "%  [ ] Compiles; braces balanced",
           "%  [ ] Exported to PDF before sending -- never send .tex",

@@ -77,12 +77,12 @@ a model:
 <!-- funnel:start -->
 | stage | count | |
 |---|---:|---|
-| ingested | **12,218** | 10 sources, deduplicated |
-| killed on keywords | -5,373 | fewer than 2 must-haves present |
-| killed on title | -3,260 | sales roles whose JD lists your whole toolchain |
-| killed on hard rejects | -641 | seniority, shift work, geography |
-| **reach an LLM call** | **2,944** | 24% - *this is what protects the free tier* |
-| shortlisted | **387** | above `shortlist_min_score` |
+| ingested | **12,473** | 10 sources, deduplicated |
+| killed on keywords | -5,521 | fewer than 2 must-haves present |
+| killed on title | -3,319 | sales roles whose JD lists your whole toolchain |
+| killed on hard rejects | -649 | seniority, shift work, geography |
+| **reach an LLM call** | **2,984** | 23% - *this is what protects the free tier* |
+| shortlisted | **362** | above `shortlist_min_score` |
 | **queued for you** | 15/day cap | because volume is not the goal |
 <!-- funnel:end -->
 
@@ -462,7 +462,15 @@ filename-based safeguard was not one.
 
 PDF needs a TeX engine. `brew install tectonic` is the light option — one
 binary that fetches only the packages a document uses. `make pdf` reports the
-page count and warns past two.
+page count and warns past `thresholds.max_resume_pages` in `profile.yaml`.
+
+**That limit is 3, because the body is 14pt.** The two are one decision, and
+they have to be changed together. `article` silently ignores a `[14pt]` option
+and falls back to 10pt — the class is `extarticle`, which honours it. When the
+font went up and the threshold did not, `make pdf` warned on **101 of 101**
+documents, and a warning with no negative case is not a signal; it is
+decoration that teaches you to skip the line. If you set the body back to
+10 or 11pt, drop `max_resume_pages` with it.
 
 **`make pdf` only compiles a `.tex` newer than its `.pdf`.** `daily` runs it
 over every prepared document every night, which was 60 compiles to reproduce
@@ -485,7 +493,7 @@ These are verified, and reported in the file:
 | personal pronouns | found "**I have** hands-on experience…" in a document about to be sent |
 | a missing teamwork signal | scanners look for collaboration language; 3 of 9 documents had none |
 | summary word count against the 70–90 band | 9 of 9 documents were 33–49 words |
-| page count | read out of the TeX engine's own log |
+| page count | read out of the TeX engine's own log, judged against `max_resume_pages` |
 
 `make claims` prints exactly what the gate matches on, per rule — the terms are
 extracted heuristically from prose, so they are worth auditing rather than trusting.

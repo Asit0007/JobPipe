@@ -355,7 +355,8 @@ _PAGES = re.compile(r"Output written on .*?\((\d+) pages?", re.S)
 
 def _pages(log_path: Path) -> int | None:
     """The engine already counted. Every TeX engine writes this line, so the
-    template's "[ ] Fits on ONE page" stops being a thing you eyeball."""
+    template's page-count checkbox stops being a thing you eyeball. The limit
+    it is judged against lives in profile.yaml, not here."""
     try:
         return int(_PAGES.search(log_path.read_text(errors="replace")).group(1))
     except (OSError, AttributeError):
