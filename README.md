@@ -460,6 +460,26 @@ A blank passphrase exits non-zero and the Makefile checks for ciphertext on disk
 before invoking any deploy — two independent gates, because the earlier
 filename-based safeguard was not one.
 
+**`make deploy` asserts the site actually serves the payload afterwards**, and
+that is not paranoia. Driven without a TTY, `vercel --prod` skips its setup
+prompt and uploads *nothing* while still creating a deployment that reports
+**Ready** — four consecutive production deployments once did exactly that, all
+Ready, all serving 404, while a 220 kB `payload.enc` sat on disk. `--yes` fixes
+it; `verify-deploy` proves it, by curling the payload and failing on anything
+that is not a 200 with a real body.
+
+**Do not connect a Git integration to this repo.** The exported site is
+gitignored — it is the entire job hunt — so a build triggered from the repo root
+produces nothing, deploys empty, **and takes the production alias away from the
+good CLI deployment.** Measured here over twelve days: every `source: cli`
+deployment had files, every `source: git` one was empty, and each empty one
+matched a commit push. Pushing code silently un-deployed the dashboard, and
+nothing noticed because the site had been verified once and nobody re-checked.
+
+**That is the general lesson: a verified deploy is not a durable one.**
+`verify-deploy` answers *"did my deploy land"*, never *"is the site up now"* —
+and those two diverge the moment anything else is allowed to deploy.
+
 PDF needs a TeX engine. `brew install tectonic` is the light option — one
 binary that fetches only the packages a document uses. `make pdf` reports the
 page count and warns past `thresholds.max_resume_pages` in `profile.yaml`.
