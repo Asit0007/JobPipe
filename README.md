@@ -77,12 +77,12 @@ a model:
 <!-- funnel:start -->
 | stage | count | |
 |---|---:|---|
-| ingested | **12,473** | 10 sources, deduplicated |
-| killed on keywords | -5,521 | fewer than 2 must-haves present |
-| killed on title | -3,319 | sales roles whose JD lists your whole toolchain |
-| killed on hard rejects | -649 | seniority, shift work, geography |
-| **reach an LLM call** | **2,984** | 23% - *this is what protects the free tier* |
-| shortlisted | **362** | above `shortlist_min_score` |
+| ingested | **13,324** | 10 sources, deduplicated |
+| killed on keywords | -5,949 | fewer than 2 must-haves present |
+| killed on title | -3,509 | sales roles whose JD lists your whole toolchain |
+| killed on hard rejects | -667 | seniority, shift work, geography |
+| **reach an LLM call** | **3,199** | 24% - *this is what protects the free tier* |
+| shortlisted | **369** | above `shortlist_min_score` |
 | **queued for you** | 15/day cap | because volume is not the goal |
 <!-- funnel:end -->
 
