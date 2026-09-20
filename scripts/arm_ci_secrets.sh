@@ -72,6 +72,10 @@ cat <<BANNER
   enable that. This is a real decision, not a formality -- the whole reason
   these two files are gitignored is that they name your employer.
 
+  What the run produces does NOT come back out: pipeline.yml no longer uploads
+  out/ as a workflow artifact, because on a public repo those are downloadable
+  by anyone. Keep it that way, or the tailored resumes become public too.
+
 BANNER
 
 read -r -p "  Upload them? [y/N] " reply

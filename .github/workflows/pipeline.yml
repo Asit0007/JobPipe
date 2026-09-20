@@ -117,11 +117,18 @@ jobs:
           # everything still sitting in Python's block buffer.
           python -u -m jobpipe.cli daily
 
-      - name: Keep the prepared documents
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: prepared-${{ github.run_number }}
-          path: out/
-          retention-days: 14
-          if-no-files-found: ignore
+      # There was an `actions/upload-artifact` step here that published out/ for
+      # 14 days. Do not put it back. On a PUBLIC repository -- which this is --
+      # workflow artifacts are downloadable by anyone, unauthenticated, straight
+      # from the run page or the REST API. out/ is one tailored resume per company
+      # (.pdf/.tex/.md/.json) built from facts.yaml: real name, employer, metrics,
+      # contact email. That is the exact file set the repo gitignores, handed back
+      # out through the side door.
+      #
+      # It never actually fired -- every run to date died at ~20s on the missing
+      # config secrets, so no artifact was ever produced -- but it would have, the
+      # first time the secrets got armed and someone pressed Run workflow.
+      #
+      # If you need the documents off a runner, the pipeline is designed to run
+      # locally (`make daily`), where out/ simply stays on your disk. If you ever
+      # genuinely need them from CI, make the repository private first.
