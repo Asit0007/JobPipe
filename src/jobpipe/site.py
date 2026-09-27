@@ -133,6 +133,11 @@ def _rewrite(html: str, stamp: str) -> str:
                 "Fix this rewrite rather than shipping a live 'Mark applied'.")
         html = html[:start] + html[end + len("\n});\n"):]
 
+    # The "AI models used" panel reads /api/models, which exists only on the local
+    # review server (and names every model and failure). Cut both marked blocks by
+    # exact markers; a marker without its partner is an error, never a half-strip.
+    html = _strip_local_only(html)
+
     html = html.replace("<title>Review queue</title>",
                         '<title>Review queue</title>\n'
                         '<meta name="robots" content="noindex, nofollow">')
@@ -141,6 +146,21 @@ def _rewrite(html: str, stamp: str) -> str:
     html = html.replace("<body>", "<body>" + _LOCK_HTML, 1)
     html = html.replace("<script>", "<script>" + _UNLOCK_JS, 1)
     _assert_balanced(html)
+    return html
+
+
+def _strip_local_only(html: str) -> str:
+    for start, end in (("<!-- local-only:start -->", "<!-- local-only:end -->"),
+                       ("// local-only:start", "// local-only:end")):
+        while start in html:
+            i = html.index(start)
+            j = html.find(end, i)
+            if j == -1:
+                raise RuntimeError(f"dashboard.html has {start!r} without {end!r}; "
+                                   "fix the template rather than exporting a local-only panel.")
+            html = html[:i] + html[j + len(end):]
+        if end in html:
+            raise RuntimeError(f"dashboard.html has {end!r} without {start!r}.")
     return html
 
 

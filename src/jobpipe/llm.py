@@ -1,4 +1,10 @@
-"""Gemini client: rate limited, budget capped, PII redacting, JSON coercing.
+"""LLM client: rate limited, budget capped, PII redacting, JSON coercing.
+
+Gemini is the default provider. Since 2026-09-27 a model name may also carry a
+provider prefix -- "groq:qwen/qwen3.8-27b", "ollama:nemotron-3-ultra" -- and
+`generate_json_chain()` walks an ordered list of them (TAILOR_CHAIN), one probe
+per model. See "Providers" and "The chain" below. Every provider goes through
+the same redaction, per-model budget and RPM window.
 
 Design notes
 ------------
@@ -27,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from . import usage
 from .config import DATA_DIR, env
 
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -35,6 +42,22 @@ BUDGET_FILE = DATA_DIR / "gemini_budget.json"
 
 class QuotaExhausted(RuntimeError):
     pass
+
+
+class ProviderRejected(RuntimeError):
+    """A 4xx other than 429: bad key, missing model, rejected parameter."""
+
+    def __init__(self, message: str, status: int, body: str = ""):
+        super().__init__(message)
+        self.status = status
+        self.body = body
+
+    @property
+    def persistent(self) -> bool:
+        """True when every later request to this model will fail the same way: a bad or
+        revoked key (Gemini says so with HTTP 400 API_KEY_INVALID, not 401) or a missing model."""
+        return (self.status in (401, 403, 404)
+                or (self.status == 400 and ("API_KEY_INVALID" in self.body or "API key not valid" in self.body)))
 
 
 # --------------------------------------------------------------------------
@@ -179,14 +202,46 @@ def _bucket(state: dict, model: str) -> dict:
 # and GEMINI_RPD_BUDGET stays the default for anything unlisted.
 DEFAULT_MODEL_CAPS = {
     "gemini-flash-latest": 20,
+    # Pinned Gemini models in TAILOR_CHAIN (2026-09-27): the RPD column of AI Studio's
+    # rate-limit page for this project (screenshot, 2026-09-27) -- Flash models 20/day,
+    # Flash-Lite 500. gemini-flash-latest pointed at gemini-3.8-flash that day (the
+    # modelVersion of a live reply), so the chain lists the alias, never both names:
+    # two names for one quota would each get a counter and double the reported room.
+    "gemini-3.8-flash": 20,
+    "gemini-3.7-flash": 20,
+    "gemini-3.6-flash": 20,
+    "gemini-3.5-flash": 20,
+    "gemini-3.1-flash-lite": 500,
+    # Chain providers (2026-09-27). Guards, not measured 429s -- §6's rule is
+    # about Gemini caps, which only a 429 body reveals. These are derived from
+    # each provider's published limits and sized for tailoring (~5k tokens a call):
+    #   Groq: 1,000 requests and 200,000 tokens per day per model (published,
+    #   2026-09-27) -> ~40 tailor calls. The org's quota is shared with
+    #   ContentPipe, which uses the same model, so a 429 can come early.
+    "groq:qwen/qwen3.8-27b": 40,
+    #   Ollama Cloud's free plan is monthly credits with no per-day figure
+    #   published; 20/day keeps one run from spending the month.
+    "ollama:nemotron-3-ultra": 20,
+    "ollama:gemma4:31b": 20,
+    "ollama:nemotron-3-super": 20,
+    "ollama:gpt-oss:120b": 20,
+    #   Same Groq account and limits as Qwen above.
+    "groq:openai/gpt-oss-120b": 40,
 }
+
+
+def _env_name(model: str) -> str:
+    """A model name as an env-var suffix: 'groq:qwen/qwen3.8-27b' -> 'groq_qwen_qwen3_8_27b'."""
+    return re.sub(r"[^A-Za-z0-9_]", "_", model)
 
 
 def _cap(model: str | None = None) -> int:
     default = int(env("GEMINI_RPD_BUDGET", "500"))
     if model is None:
         return default
-    override = env(f"GEMINI_RPD_BUDGET_{model}", "")
+    # The raw name first (the historical form, e.g. GEMINI_RPD_BUDGET_gemini-flash-latest),
+    # then a shell-safe one, since a provider prefix brings ':' and '/' into the name.
+    override = env(f"GEMINI_RPD_BUDGET_{model}", "") or env(f"GEMINI_RPD_BUDGET_{_env_name(model)}", "")
     if override:
         return int(override)
     return DEFAULT_MODEL_CAPS.get(model, default)
@@ -298,13 +353,217 @@ MAX_OUTPUT_TOKENS = 8192
 REQUEST_TIMEOUT = float(env("GEMINI_TIMEOUT", "240"))
 
 
+# --------------------------------------------------------------------------
+# Providers
+# --------------------------------------------------------------------------
+# A model name with a known prefix ("groq:qwen/qwen3.8-27b") goes to that
+# provider's OpenAI-compatible endpoint; anything else is a Gemini model, as it
+# always was. The prefix is everything before the FIRST colon, because model ids
+# themselves contain slashes and colons.
+#
+# THE RULE FOR THIS REGISTRY: résumé content goes to these providers, so a
+# provider is listed only if its policy says it does not train on free-tier API
+# prompts. Gemini's free tier does use prompts to improve Google's products; it
+# was here first and is covered by redact() (module docstring). Checked and left
+# OUT on purpose (2026-09-27): Mistral's free tier (trains on prompts),
+# Requesty's free Nemotron models ("Training Permitted Models"), and OpenRouter
+# `:free` models (training depends on the upstream provider). Do not add a
+# provider without reading its data policy and recording the source here.
+PROVIDERS: dict[str, dict] = {
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "key_envs": ["GROQ_API_KEY"],
+        "max_tokens_param": "max_completion_tokens",
+        # "Groq is not permitted to use Inputs or Outputs for training or fine-tuning ... unless
+        # explicitly granted permission" -- console.groq.com/docs/legal/services-agreement §4.2,
+        # read 2026-09-27. May log up to 30 days for abuse/reliability.
+        "policy": "no training (Services Agreement §4.2, 2026-09-27)",
+    },
+    "ollama": {
+        "base_url": "https://ollama.com/v1",
+        # OLAMA_API_KEY: the misspelling both .env files were first saved with (ContentPipe reads it too).
+        "key_envs": ["OLLAMA_API_KEY", "OLAMA_API_KEY"],
+        "max_tokens_param": "max_tokens",
+        # "we process your prompts and responses transiently to provide the service and never
+        # train on it" -- ollama.com/privacy, read 2026-09-27.
+        "policy": "no training, transient processing (privacy page, 2026-09-27)",
+    },
+}
+
+
+def split_model(name: str) -> tuple[str, str]:
+    """('groq', 'qwen/qwen3.8-27b') for 'groq:qwen/qwen3.8-27b'; ('gemini', name) otherwise."""
+    head, sep, rest = name.partition(":")
+    if sep and rest and head.lower() in PROVIDERS:
+        return head.lower(), rest
+    if sep and rest and head.lower() == "gemini":
+        return "gemini", rest
+    if sep:
+        # Gemini model names never contain a colon, so this is a provider we do not
+        # know -- most likely one left out on purpose (it trains on prompts). Say so,
+        # rather than sending "mistral:..." to Gemini as a model name.
+        raise ValueError(f"{name!r}: unknown provider {head!r}. Allowed: gemini, "
+                         f"{', '.join(PROVIDERS)} (only providers that do not train on prompts; see llm.PROVIDERS).")
+    return "gemini", name
+
+
+def refusal(model: str) -> str | None:
+    """Why this model name is refused (an unknown or training provider), or None."""
+    try:
+        split_model(model)
+        return None
+    except ValueError as e:
+        return str(e)
+
+
+def has_key(model: str) -> bool:
+    """Whether the provider behind this model name is configured at all. A refused
+    name has no provider, so False: callers that size or list the chain must not
+    crash on one bad TAILOR_CHAIN entry (the chain itself logs the refusal)."""
+    if refusal(model):
+        return False
+    provider, _ = split_model(model)
+    return bool(_provider_key(provider))
+
+
+def _provider_key(provider: str) -> str:
+    names = ["GEMINI_API_KEY"] if provider == "gemini" else PROVIDERS[provider]["key_envs"]
+    return next((v for v in ((env(n) or "").strip() for n in names) if v), "")
+
+
+# Groq blocks some default HTTP-library User-Agents with an empty 403 (seen
+# from ContentPipe with urllib); an honest, specific one passes.
+_USER_AGENT = "JobPipe/1.0 (personal job-search pipeline)"
+
+
+def _generate_openai(prompt: str, provider: str, model_id: str, *, json_out: bool,
+                     temperature: float, max_output_tokens: int) -> httpx.Response:
+    spec = PROVIDERS[provider]
+    key = _provider_key(provider)
+    if not key:
+        raise RuntimeError(f"{' / '.join(spec['key_envs'])} is not set; {provider} models are unavailable.")
+    payload = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        spec["max_tokens_param"]: max_output_tokens,
+    }
+    if json_out:
+        payload["response_format"] = {"type": "json_object"}
+    return httpx.post(f"{spec['base_url']}/chat/completions", json=payload, timeout=REQUEST_TIMEOUT,
+                      headers={"Authorization": f"Bearer {key}", "User-Agent": _USER_AGENT})
+
+
+def _openai_text(data: dict, model: str, max_output_tokens: int) -> str:
+    choice = (data.get("choices") or [{}])[0]
+    text = ((choice.get("message") or {}).get("content") or "")
+    # Open reasoning models can wrap their thinking in <think> tags ahead of the answer.
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+    if choice.get("finish_reason") == "length":
+        raise RuntimeError(f"{model} hit the {max_output_tokens}-token output cap and the reply is truncated.")
+    if not text:
+        raise RuntimeError(f"{model} returned no content")
+    return text
+
+
+def _generate_with_retries(send, parse, *, model: str, max_retries: int, provider: str = "gemini") -> str:
+    """The one retry loop, for Gemini and every chain provider.
+
+    A slot is reserved per ATTEMPT (a retry is a real request that the provider
+    counts, so the budget counts it too -- a bad retry loop can eat the day, and
+    that is the intended, visible behaviour). 429 backs off with jitter, 5xx and
+    network errors back off; no sleep after the last attempt. The final error
+    names every attempt's actual cause: the old code ended with a flat "rate
+    limited" even when the cause was a timeout or a 503, and sent a whole
+    session chasing a quota problem that did not exist (7.22, 7.32).
+    """
+    delay = 2.0
+    failures: list[str] = []
+    # Every request the provider RECEIVES goes in the usage log (usage.py), for the
+    # dashboard's "models used, last 48 h". A spent budget sends nothing, so logs nothing.
+    name = model.split(":", 1)[1] if provider != "gemini" and ":" in model else model
+    for attempt in range(max_retries):
+        _reserve_slot(model)
+        last = attempt == max_retries - 1
+        t0 = time.time()
+        took = lambda: int((time.time() - t0) * 1000)  # noqa: E731
+        try:
+            r = send()
+        except httpx.RequestError as e:
+            failures.append(type(e).__name__)
+            usage.record(provider, name, "error", ms=took(), detail=type(e).__name__)
+            if last:
+                raise
+            time.sleep(delay + random.uniform(0, 1))
+            delay *= 2
+            continue
+        if r.status_code == 429:
+            # Exponential backoff WITH jitter. Immediate retry makes it worse.
+            failures.append("429")
+            usage.record(provider, name, "quota", ms=took(), detail="HTTP 429")
+            if not last:
+                time.sleep(delay + random.uniform(0, delay / 2))
+                delay = min(delay * 2, 60)
+            continue
+        if r.status_code >= 500:
+            failures.append(str(r.status_code))
+            usage.record(provider, name, "overloaded", ms=took(), detail=f"HTTP {r.status_code}")
+            if not last:
+                time.sleep(delay + random.uniform(0, 1))
+                delay *= 2
+            continue
+        if r.status_code >= 400:
+            # A bad key, a missing model, a rejected parameter: retrying cannot help.
+            # The body only, never the request URL.
+            usage.record(provider, name, "error", ms=took(), detail=f"HTTP {r.status_code}")
+            raise ProviderRejected(f"{model} answered HTTP {r.status_code}: {r.text[:200]}", r.status_code, r.text)
+        try:
+            text = parse(r)
+        except Exception as e:
+            usage.record(provider, name, "invalid_output", ms=took(), detail=str(e)[:120])
+            raise
+        usage.record(provider, name, "ok", ms=took())
+        return text
+    seen = ", ".join(failures) or "no attempts recorded"
+    raise QuotaExhausted(
+        f"Exhausted {max_retries} retries against {model} [{seen}]. "
+        f"429 = quota or rate limit; 5xx = provider-side; ReadTimeout = the call "
+        f"took longer than GEMINI_TIMEOUT ({REQUEST_TIMEOUT:.0f}s).")
+
+
+def _gemini_text(data: dict, max_output_tokens: int) -> str:
+    cand = (data.get("candidates") or [{}])[0]
+    # Thinking models can split the answer across parts. Joining them is
+    # correct for a single-part reply too.
+    parts = (cand.get("content") or {}).get("parts") or []
+    text = "".join(p.get("text") or "" for p in parts)
+    if not text:
+        reason = data.get("promptFeedback", {}).get("blockReason", "unknown")
+        raise RuntimeError(f"Gemini returned no content (reason: {reason})")
+    if cand.get("finishReason") == "MAX_TOKENS":
+        um = data.get("usageMetadata", {})
+        raise RuntimeError(
+            "Gemini hit maxOutputTokens and the reply is truncated "
+            f"(thinking={um.get('thoughtsTokenCount')}, "
+            f"answer={um.get('candidatesTokenCount')}, "
+            f"ceiling={max_output_tokens}). Raise max_output_tokens.")
+    return text
+
+
 def generate(prompt: str, *, model: str, json_out: bool = True,
              temperature: float = 0.2, max_retries: int = 5,
              max_output_tokens: int = MAX_OUTPUT_TOKENS) -> str:
+    provider, model_id = split_model(model)
+    if provider != "gemini":
+        return _generate_with_retries(
+            lambda: _generate_openai(redact(prompt), provider, model_id, json_out=json_out,
+                                     temperature=temperature, max_output_tokens=max_output_tokens),
+            lambda r: _openai_text(r.json(), model, max_output_tokens),
+            model=f"{provider}:{model_id}", max_retries=max_retries, provider=provider)
+
     key = env("GEMINI_API_KEY")
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not set. Copy .env.example to .env.")
-
     payload = {
         "contents": [{"parts": [{"text": redact(prompt)}]}],
         "generationConfig": {
@@ -314,77 +573,19 @@ def generate(prompt: str, *, model: str, json_out: bool = True,
     }
     if json_out:
         payload["generationConfig"]["responseMimeType"] = "application/json"
-
-    url = ENDPOINT.format(model=model)
-    delay = 2.0
-
-    # What actually went wrong on each attempt. The old code threw this away and
-    # ended with a flat "rate limited", which is a lie when the cause was a
-    # timeout or a 503 -- and it sent a whole session chasing a quota problem
-    # that did not exist. Same species as 7.22: a wrong diagnostic costs more
-    # than no diagnostic.
-    failures: list[str] = []
-
-    for attempt in range(max_retries):
-        # Reserved per ATTEMPT, not per call: a retry is a real request that
-        # Google counts, so the budget must count it too. A bad retry loop can
-        # therefore eat the day -- that is the intended, visible behaviour.
-        _reserve_slot(model)
-        try:
-            r = httpx.post(url, params={"key": key}, json=payload,
-                           timeout=REQUEST_TIMEOUT)
-        except httpx.RequestError as e:
-            failures.append(f"{type(e).__name__}")
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(delay + random.uniform(0, 1))
-            delay *= 2
-            continue
-
-        if r.status_code == 429:
-            # Exponential backoff WITH jitter. Immediate retry makes it worse.
-            failures.append("429")
-            sleep_for = delay + random.uniform(0, delay / 2)
-            time.sleep(sleep_for)
-            delay = min(delay * 2, 60)
-            continue
-
-        if r.status_code >= 500:
-            failures.append(str(r.status_code))
-            time.sleep(delay + random.uniform(0, 1))
-            delay *= 2
-            continue
-
-        r.raise_for_status()
-        data = r.json()
-        cand = (data.get("candidates") or [{}])[0]
-        # Thinking models can split the answer across parts. Joining them is
-        # correct for a single-part reply too.
-        parts = (cand.get("content") or {}).get("parts") or []
-        text = "".join(p.get("text") or "" for p in parts)
-        if not text:
-            reason = data.get("promptFeedback", {}).get("blockReason", "unknown")
-            raise RuntimeError(f"Gemini returned no content (reason: {reason})")
-        if cand.get("finishReason") == "MAX_TOKENS":
-            um = data.get("usageMetadata", {})
-            raise RuntimeError(
-                "Gemini hit maxOutputTokens and the reply is truncated "
-                f"(thinking={um.get('thoughtsTokenCount')}, "
-                f"answer={um.get('candidatesTokenCount')}, "
-                f"ceiling={max_output_tokens}). Raise max_output_tokens.")
-        return text
-
-    seen = ", ".join(failures) or "no attempts recorded"
-    raise QuotaExhausted(
-        f"Exhausted {max_retries} retries against {model} [{seen}]. "
-        f"429 = quota or rate limit; 5xx = Google-side; ReadTimeout = the call "
-        f"took longer than GEMINI_TIMEOUT ({REQUEST_TIMEOUT:.0f}s).")
+    url = ENDPOINT.format(model=model_id)
+    # Key in a header, not ?key=: an httpx error's message carries the full
+    # request URL, and `cli rescreen` prints the start of an error message.
+    return _generate_with_retries(
+        lambda: httpx.post(url, headers={"x-goog-api-key": key}, json=payload, timeout=REQUEST_TIMEOUT),
+        lambda r: _gemini_text(r.json(), max_output_tokens),
+        model=model_id, max_retries=max_retries)
 
 
 def generate_json(prompt: str, *, model: str, temperature: float = 0.2,
-                  max_output_tokens: int = MAX_OUTPUT_TOKENS) -> dict:
+                  max_output_tokens: int = MAX_OUTPUT_TOKENS, max_retries: int = 5) -> dict:
     raw = generate(prompt, model=model, json_out=True, temperature=temperature,
-                   max_output_tokens=max_output_tokens)
+                   max_output_tokens=max_output_tokens, max_retries=max_retries)
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned)
@@ -392,3 +593,102 @@ def generate_json(prompt: str, *, model: str, temperature: float = 0.2,
         return json.loads(cleaned)
     except json.JSONDecodeError as e:
         raise ValueError(f"Model did not return valid JSON: {e}\n---\n{cleaned[:500]}")
+
+
+# --------------------------------------------------------------------------
+# The chain
+# --------------------------------------------------------------------------
+# `generate_json_chain` tries an ordered list of models and returns the first
+# usable answer AND the model that gave it, so provenance records the model
+# that actually wrote the document, not the one that was asked first.
+#
+# One probe per model, then the next one. §6 has said "one probe, then fall
+# back" since 2026-09-01, yet generate() retried a 503 five times and charged
+# each retry to flash-latest's 20/day: [503, 503, 503, 503, 503] in the logs of
+# 2026-09-25, -26 and -27. A model that fails is benched for the rest of the
+# run, so the next job does not spend another probe on it.
+#
+# EXCEPT the last model standing. It has nothing to fall back to, so it keeps
+# the full retry loop, as flash-lite had when it was the fallback stage: one
+# routine 503 on the last resort must not stop the day's prepare with hundreds
+# of calls unspent. A single pinned model is the last model standing too.
+BENCH_SECONDS_SICK = 900     # 5xx, timeout, bad key, missing model: down for now
+BENCH_SECONDS_BUSY = 90      # 429: a per-minute limit, usually
+LAST_RESORT_RETRIES = 5
+_benched: dict[str, float] = {}
+
+
+def reset_bench() -> None:
+    """Test hook: the bench is process state."""
+    _benched.clear()
+
+
+def _canonical(model: str) -> str:
+    """The budget-counter key: 'provider:model' with the provider lowercased, and Gemini
+    names without a 'gemini:' prefix, as they always were. A refused name is returned
+    unchanged (it is never called)."""
+    if refusal(model):
+        return model
+    provider, model_id = split_model(model)
+    return model_id if provider == "gemini" else f"{provider}:{model_id}"
+
+
+def generate_json_chain(prompt: str, *, models: list[str], temperature: float = 0.2,
+                        max_output_tokens: int = MAX_OUTPUT_TOKENS) -> tuple[dict, str]:
+    """(parsed JSON, model that answered). Raises QuotaExhausted when every model
+    is spent, benched, unconfigured or refused -- the caller's cue to stop for the
+    day -- and RuntimeError when models answered but none usably (bad JSON,
+    truncated), which is about this one prompt, not the day."""
+    tried: list[str] = []
+    candidates: list[str] = []
+    for raw in models:
+        why = refusal(raw)
+        if why:
+            tried.append(f"{raw}: refused, not an allowed provider")
+            continue
+        m = _canonical(raw)
+        if m in candidates:
+            continue
+        if not has_key(m):
+            tried.append(f"{m}: no key")
+        elif _benched.get(m, 0) > time.time():
+            tried.append(f"{m}: benched")
+        elif budget_remaining(m) < 1:
+            tried.append(f"{m}: budget spent")
+        else:
+            candidates.append(m)
+
+    only_quota = True
+    for i, m in enumerate(candidates):
+        retries = LAST_RESORT_RETRIES if i == len(candidates) - 1 else 1
+        try:
+            return generate_json(prompt, model=m, temperature=temperature,
+                                 max_output_tokens=max_output_tokens, max_retries=retries), m
+        except QuotaExhausted as e:
+            # "[503]" after one probe, "[503, 503, 429, ...]" after the last resort's retries.
+            # A spent daily budget (from _reserve_slot) has no brackets.
+            found = re.search(r"\[([^\]]+)\]", str(e))
+            causes = found.group(1).split(", ") if found else ["budget spent"]
+            busy = all(c == "429" for c in causes)
+            _benched[m] = time.time() + (BENCH_SECONDS_BUSY if busy else BENCH_SECONDS_SICK)
+            tried.append(f"{m}: {', '.join(causes)}")
+        except httpx.RequestError as e:
+            _benched[m] = time.time() + BENCH_SECONDS_SICK
+            tried.append(f"{m}: {type(e).__name__}")
+        except ProviderRejected as e:
+            # A key or missing-model failure repeats on every job: bench, move on.
+            # Any other 4xx is about this request, like bad JSON below.
+            if e.persistent:
+                _benched[m] = time.time() + BENCH_SECONDS_SICK
+            else:
+                only_quota = False
+            tried.append(f"{m}: HTTP {e.status}{' (bad key or missing model)' if e.persistent else ''}")
+        except (RuntimeError, ValueError) as e:
+            # Answered, but not usably for THIS prompt (bad JSON, truncated):
+            # the next model may do better, and the next prompt may be fine here.
+            only_quota = False
+            tried.append(f"{m}: {str(e)[:120]}")
+    summary = "; ".join(tried) or "no models configured"
+    if only_quota:
+        raise QuotaExhausted(f"No model in the chain could answer: {summary}")
+    raise RuntimeError(f"No model in the chain gave a usable answer: {summary}")

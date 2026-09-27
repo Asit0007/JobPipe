@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 
-from .config import MODEL_TAILOR, facts, profile
-from .llm import generate_json
+from .config import TAILOR_CHAIN, facts, profile
+from .llm import generate_json_chain
 
 # Questions the pipeline will NEVER answer on your behalf. These are
 # negotiating positions, not data-entry fields.
@@ -60,7 +60,9 @@ RULES:
 """
 
 
-def generate_for(job, model: str | None = None) -> dict:
+def generate_for(job, model: str | None = None, models: list[str] | None = None) -> dict:
+    """Screening answers. `model` pins one model; else `models`, else TAILOR_CHAIN.
+    The returned dict's `model` is the one that answered (provenance)."""
     cfg, p = facts(), profile()
     skills = cfg.get("skills", {})
     bullets = [
@@ -72,7 +74,7 @@ def generate_for(job, model: str | None = None) -> dict:
     if not bullets:
         return {"answers": [], "error": "No verified facts in config/facts.yaml"}
 
-    out = generate_json(
+    out, used = generate_json_chain(
         PROMPT.format(
             strong=", ".join(skills.get("strong", [])),
             working=", ".join(skills.get("working", [])),
@@ -82,8 +84,9 @@ def generate_for(job, model: str | None = None) -> dict:
             title=job["title"], company=job["company"],
             description=(job["description"] or "")[:4000],
         ),
-        model=model or MODEL_TAILOR, temperature=0.3,
+        models=[model] if model else (models or TAILOR_CHAIN), temperature=0.3,
     )
+    out["model"] = used
     out["human_only"] = HUMAN_ONLY
     return out
 

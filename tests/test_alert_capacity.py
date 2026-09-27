@@ -338,6 +338,9 @@ def test_prepare_is_sized_to_the_tailor_budget_not_the_default_15(monkeypatch):
     monkeypatch.setattr(cli, "_pdf_all", lambda: None)
     monkeypatch.setattr(cli.db, "fetch", lambda **k: [object()] * 40)
     monkeypatch.setattr("jobpipe.llm.budget_remaining", lambda m=None: 9)
+    # One-model chain: the sizing rule as it was written, before the chain (2026-09-27).
+    monkeypatch.setattr("jobpipe.config.TAILOR_CHAIN", ["gemini-flash-latest"])
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
     def fake_tailor(limit=15, model=None, log=print):
         seen["limit"], seen["model"] = limit, model
@@ -364,6 +367,10 @@ def test_a_tailor_that_produces_nothing_triggers_the_fallback(monkeypatch):
     monkeypatch.setattr(cli.db, "fetch", lambda **k: [object()] * 40)
     monkeypatch.setattr("jobpipe.llm.budget_remaining", lambda m=None: 20)
     monkeypatch.setattr("jobpipe.config.MODEL_TAILOR", "gemini-flash-latest")
+    # A chain WITHOUT the fallback model keeps the separate fallback stage (the
+    # default chain ends in it and needs no stage: see the chain tests below).
+    monkeypatch.setattr("jobpipe.config.TAILOR_CHAIN", ["gemini-flash-latest"])
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
     def fake_tailor(limit=15, model=None, log=print):
         calls.append(model)
@@ -393,6 +400,8 @@ def test_no_second_attempt_when_the_primary_tailor_worked(monkeypatch):
     monkeypatch.setattr(cli, "_pdf_all", lambda: None)
     monkeypatch.setattr(cli.db, "fetch", lambda **k: [object()] * 40)
     monkeypatch.setattr("jobpipe.llm.budget_remaining", lambda m=None: 20)
+    monkeypatch.setattr("jobpipe.config.TAILOR_CHAIN", ["gemini-flash-latest"])
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     # 20 calls / 2 per job = 10 asked for; return all 10.
     monkeypatch.setattr("jobpipe.tailor.run",
                         lambda limit=15, model=None, log=print: calls.append(model) or 10)
@@ -417,6 +426,8 @@ def test_a_PARTIAL_tailor_failure_DOES_retry_on_the_fallback(monkeypatch):
     monkeypatch.setattr(cli.db, "fetch", lambda **k: [object()] * 40)
     monkeypatch.setattr("jobpipe.llm.budget_remaining", lambda m=None: 20)
     monkeypatch.setattr("jobpipe.config.MODEL_TAILOR", "gemini-flash-latest")
+    monkeypatch.setattr("jobpipe.config.TAILOR_CHAIN", ["gemini-flash-latest"])
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
     def fake_tailor(limit=15, model=None, log=print):
         calls.append(model)
@@ -426,3 +437,87 @@ def test_a_PARTIAL_tailor_failure_DOES_retry_on_the_fallback(monkeypatch):
     cli.cmd_daily()
     assert len(calls) == 2, f"a partial failure must still fall back: {calls}"
     assert calls[1] == cli.FALLBACK_TAILOR, calls
+
+
+# --- 8. The tailor chain (2026-09-27) ----------------------------------------
+
+def _daily_with(monkeypatch, *, chain, budgets, keys):
+    from jobpipe import cli
+
+    calls = []
+    for name in ("cmd_ingest", "cmd_score", "cmd_notify", "cmd_track",
+                 "cmd_status", "cmd_readme_stats"):
+        monkeypatch.setattr(cli, name, lambda: None)
+    monkeypatch.setattr(cli, "_pdf_all", lambda: None)
+    monkeypatch.setattr(cli.db, "fetch", lambda **k: [object()] * 40)
+    monkeypatch.setattr("jobpipe.llm.budget_remaining", lambda m=None: budgets.get(m, 0))
+    monkeypatch.setattr("jobpipe.config.TAILOR_CHAIN", chain)
+    for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "OLLAMA_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    for k in keys:
+        monkeypatch.setenv(k, "test-key")
+
+    def fake_tailor(limit=15, model=None, log=print):
+        calls.append((limit, model))
+        return limit
+
+    monkeypatch.setattr("jobpipe.tailor.run", fake_tailor)
+    cli.cmd_daily()
+    return calls
+
+
+def test_a_chain_ending_in_the_fallback_runs_ONE_prepare_sized_to_the_whole_chain(monkeypatch):
+    """The chain walks on to flash-lite job by job, so a second fallback stage
+    would only re-ask for the same room. Size = every configured model's budget,
+    capped at what notify queues (15 in the example profile)."""
+    calls = _daily_with(
+        monkeypatch,
+        chain=["gemini-flash-latest", "groq:qwen/qwen3.8-27b", "gemini-flash-lite-latest"],
+        budgets={"gemini-flash-latest": 4, "groq:qwen/qwen3.8-27b": 6, "gemini-flash-lite-latest": 2},
+        keys=["GEMINI_API_KEY", "GROQ_API_KEY"])
+    assert calls == [(6, None)], calls          # (4 + 6 + 2) // 2 = 6, one run, the chain decides
+
+
+def test_a_provider_without_a_key_adds_no_room(monkeypatch):
+    """Its models are skipped at call time, so counting their budget would ask for
+    jobs nothing can write."""
+    calls = _daily_with(
+        monkeypatch,
+        chain=["gemini-flash-latest", "groq:qwen/qwen3.8-27b", "gemini-flash-lite-latest"],
+        budgets={"gemini-flash-latest": 4, "groq:qwen/qwen3.8-27b": 40, "gemini-flash-lite-latest": 2},
+        keys=["GEMINI_API_KEY"])
+    assert calls == [(3, None)], calls          # Groq has no key: (4 + 2) // 2
+
+
+def test_the_chain_never_asks_for_more_than_notify_will_queue(monkeypatch):
+    from jobpipe.config import profile
+
+    cap = profile()["thresholds"]["notify_daily_cap"]
+    calls = _daily_with(
+        monkeypatch,
+        chain=["gemini-flash-latest", "gemini-flash-lite-latest"],
+        budgets={"gemini-flash-latest": 20, "gemini-flash-lite-latest": 500},
+        keys=["GEMINI_API_KEY"])
+    assert calls == [(cap, None)], calls
+
+
+def test_a_chain_ending_in_a_gemini_prefixed_fallback_still_counts_as_ending_in_it(monkeypatch):
+    """Review #8: a raw-string check missed 'gemini:gemini-flash-lite-latest' and ran the
+    fallback stage a second time on the same model."""
+    calls = _daily_with(
+        monkeypatch,
+        chain=["gemini-flash-latest", "gemini:gemini-flash-lite-latest"],
+        budgets={"gemini-flash-latest": 4, "gemini-flash-lite-latest": 6},
+        keys=["GEMINI_API_KEY"])
+    assert calls == [(5, None)], calls
+
+
+def test_a_refused_chain_entry_does_not_abort_daily(monkeypatch, capsys):
+    """Review #2 end to end: notify/track must still run after a bad TAILOR_CHAIN line."""
+    calls = _daily_with(
+        monkeypatch,
+        chain=["mistral:ministral-14b-latest", "gemini-flash-latest"],
+        budgets={"gemini-flash-latest": 6},
+        keys=["GEMINI_API_KEY"])
+    assert calls == [(3, None)], calls
+    assert "TAILOR_CHAIN entries refused" in capsys.readouterr().out

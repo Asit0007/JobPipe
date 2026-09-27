@@ -300,29 +300,24 @@ def cmd_rescreen():
     every prepared document was still saying "my candidate profile does not
     specify my work authorization status".
     """
-    from . import llm, render, screening, tailor
-    from .config import MODEL_TAILOR
+    from . import render, screening, tailor
     target = _target_and_force()[0]
     docs = render.documents(target)
     if not docs:
         print(f"no prepared documents matching {target!r} in out/")
         return
-    # Same fallback `daily` applies to prepare. Without it a rescreen run on a
-    # day MODEL_TAILOR is spent or 503ing dies on the first document -- which is
+    # Walks TAILOR_CHAIN like prepare does. Without a fallback a rescreen run on a
+    # day MODEL_TAILOR is spent or 503ing died on the first document -- which is
     # exactly how 15 documents ended up with no screening answers on 2026-09-02.
-    model = MODEL_TAILOR
-    if llm.budget_remaining(model) < 1:
-        model = FALLBACK_TAILOR
-        print(f"  {MODEL_TAILOR} has no budget left; using {model}")
     done = 0
     for md in docs:
         doc = render.load(md)
         _refresh_job(doc)
         try:
-            doc["screening"] = screening.generate_for(doc["job"], model=model)
+            doc["screening"] = screening.generate_for(doc["job"])
             # Only the screening half changed; the bullets keep whatever model
             # wrote them, which may be a different one on a different day.
-            doc["models"] = {**(doc.get("models") or {}), "screening": model}
+            doc["models"] = {**(doc.get("models") or {}), "screening": doc["screening"].get("model")}
         except Exception as e:
             print(f"  ! {md.name}: {type(e).__name__}: {str(e)[:90]}")
             break
@@ -460,6 +455,21 @@ FALLBACK_TAILOR = "gemini-flash-lite-latest"
 
 
 
+def chain_budget(chain: list[str]) -> tuple[int, str]:
+    """(calls left across the configured models of a chain, a readable breakdown).
+
+    A model whose provider has no key is left out: it will be skipped, so its
+    budget is not room. Duplicates count once.
+    """
+    from . import llm
+    seen: dict[str, int] = {}
+    for m in chain:
+        c = llm._canonical(m)
+        if c not in seen and llm.has_key(c):
+            seen[c] = llm.budget_remaining(c)
+    return sum(seen.values()), ", ".join(f"{m} {n}" for m, n in seen.items()) or "no model configured"
+
+
 def fallback_room(written: int, asked: int, fb_left: int, target: int) -> int:
     """How many jobs to retry on the fallback tailor model. 0 means don't.
 
@@ -508,7 +518,7 @@ def cmd_daily():
     documents worth compiling. The summary at the end names what broke.
     """
     from . import llm
-    from .config import MODEL_TAILOR
+    from .config import MODEL_TAILOR, TAILOR_CHAIN
     from .tailor import run as tailor_run
 
     failed = []
@@ -531,10 +541,19 @@ def cmd_daily():
     if not shortlisted:
         print("  nothing shortlisted; skipping")
     else:
-        left = llm.budget_remaining(MODEL_TAILOR)
-        affordable = left // 2          # tailor call + screening call per job
-        print(f"  {shortlisted} shortlisted; {MODEL_TAILOR} has {left} call(s) "
-              f"left -> room for {affordable} job(s)")
+        # The chain spends from every model in it, so the room is the sum of what
+        # each configured model has left -- not MODEL_TAILOR's alone -- capped at
+        # what notify will actually queue (more is work nobody sees).
+        refused = [m for m in TAILOR_CHAIN if llm.refusal(m)]
+        if refused:
+            # Loud, but not fatal: the rest of the chain still runs (7.54's lesson,
+            # one bad setting must not take down notify/track with it).
+            print(f"  ! TAILOR_CHAIN entries refused (not an allowed provider, see llm.PROVIDERS): {', '.join(refused)}")
+        left, parts = chain_budget(TAILOR_CHAIN)
+        target = profile()["thresholds"]["notify_daily_cap"]
+        affordable = min(left // 2, target)   # tailor call + screening call per job
+        print(f"  {shortlisted} shortlisted; the tailor chain has {left} call(s) "
+              f"left ({parts}) -> room for {affordable} job(s)")
         asked = min(affordable, shortlisted)
         written = 0
         if affordable >= 1:
@@ -554,7 +573,11 @@ def cmd_daily():
         # `written < asked` subsumes the zero case, so nothing that used to
         # trigger stops triggering. Retry once on the model with quota, never
         # in a loop.
-        if MODEL_TAILOR != FALLBACK_TAILOR:
+        # Redundant when the chain already ends in the fallback model (the
+        # default): the chain has walked on to it job by job. Kept for a
+        # TAILOR_CHAIN that leaves it out.
+        chain_names = {llm._canonical(m) for m in TAILOR_CHAIN}
+        if llm._canonical(MODEL_TAILOR) != FALLBACK_TAILOR and FALLBACK_TAILOR not in chain_names:
             fb_left = llm.budget_remaining(FALLBACK_TAILOR)
             # Read the target from notify_daily_cap rather than repeating the
             # 15: more documents than notify will queue is work nobody sees,
@@ -683,11 +706,12 @@ def cmd_status():
     # ceiling 25x too high for the model that actually constrains `prepare`.
     # That is 7.33's failure surviving in the one path 7.33 did not touch: the
     # counter was fixed, the number it is printed against was not.
-    from .config import MODEL_SCORE, MODEL_TAILOR
-    from .llm import _cap
+    from .config import MODEL_SCORE, MODEL_TAILOR, TAILOR_CHAIN
+    from .llm import _cap, _canonical, has_key
     per_model = budget_by_model()
-    print("\ngemini calls left today")
-    for name in dict.fromkeys([MODEL_SCORE, MODEL_TAILOR, *per_model]):
+    chain = [_canonical(m) for m in TAILOR_CHAIN if has_key(m)]
+    print("\nLLM calls left today")
+    for name in dict.fromkeys([MODEL_SCORE, MODEL_TAILOR, *chain, *per_model]):
         left = per_model.get(name, _cap(name))
         used = "" if name in per_model else "  (none used yet)"
         print(f"  {name:<28} {left} of {_cap(name)}{used}")

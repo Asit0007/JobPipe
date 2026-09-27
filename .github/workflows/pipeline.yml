@@ -94,6 +94,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           MODEL_SCORE: ${{ vars.MODEL_SCORE || 'gemini-flash-lite-latest' }}
           MODEL_TAILOR: ${{ vars.MODEL_TAILOR || 'gemini-flash-latest' }}
+          # Tailor chain providers (2026-09-27). Unset secrets are empty, and a
+          # provider with no key is skipped, so this stays Gemini-only until they exist.
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           # MEASURED, not guessed. 12 RPM produced sustained 429s and made
           # score.run() abort batches; 1200/day is fiction -- the real free-tier
           # cap is 500/day per model, and 20/day on gemini-flash-latest.

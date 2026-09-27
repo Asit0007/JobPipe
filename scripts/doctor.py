@@ -38,7 +38,7 @@ def check_key() -> str | None:
     if not key.startswith("AIza"):
         line(WARN, "Key doesn't look like an AI Studio key (expected it to start with AIza).")
     try:
-        r = httpx.get(f"{BASE}/models", params={"key": key}, timeout=30)
+        r = httpx.get(f"{BASE}/models", headers={"x-goog-api-key": key}, timeout=30)
     except httpx.RequestError as e:
         line(BAD, f"Cannot reach Google: {e}")
         return None
@@ -95,7 +95,7 @@ def quota_id(resp) -> str:
 
 def list_models(key: str) -> list[str]:
     print("\n== Models your key can call ==")
-    r = httpx.get(f"{BASE}/models", params={"key": key}, timeout=30)
+    r = httpx.get(f"{BASE}/models", headers={"x-goog-api-key": key}, timeout=30)
     names = []
     for m in r.json().get("models", []):
         if "generateContent" not in m.get("supportedGenerationMethods", []):
@@ -131,7 +131,7 @@ def probe_tier(key: str, models: list[str]) -> str:
     for attempt in range(3):
         try:
             r = httpx.post(f"{BASE}/models/{target}:generateContent",
-                           params={"key": key}, json=body, timeout=60)
+                           headers={"x-goog-api-key": key}, json=body, timeout=60)
         except httpx.RequestError as e:
             line(WARN, f"Probe failed ({e}). Assuming free tier.")
             return "free"
@@ -175,7 +175,7 @@ def measure_rpm(key: str, model: str) -> None:
         # model is a fact worth reporting, not a reason to lose the report.
         try:
             r = httpx.post(f"{BASE}/models/{model}:generateContent",
-                           params={"key": key}, json=body, timeout=45)
+                           headers={"x-goog-api-key": key}, json=body, timeout=45)
         except httpx.RequestError as e:
             line(WARN, f"{type(e).__name__} on call {i+1} - {model} is not answering.")
             line(WARN, "Usually transient overload on Google's side. Retry later;")

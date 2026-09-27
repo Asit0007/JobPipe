@@ -77,12 +77,12 @@ a model:
 <!-- funnel:start -->
 | stage | count | |
 |---|---:|---|
-| ingested | **16,101** | 10 sources, deduplicated |
-| killed on keywords | -7,303 | fewer than 2 must-haves present |
-| killed on title | -4,178 | sales roles whose JD lists your whole toolchain |
-| killed on hard rejects | -751 | seniority, shift work, geography |
-| **reach an LLM call** | **3,869** | 24% - *this is what protects the free tier* |
-| shortlisted | **402** | above `shortlist_min_score` |
+| ingested | **18,281** | 10 sources, deduplicated |
+| killed on keywords | -8,293 | fewer than 2 must-haves present |
+| killed on title | -4,664 | sales roles whose JD lists your whole toolchain |
+| killed on hard rejects | -841 | seniority, shift work, geography |
+| **reach an LLM call** | **4,483** | 24% - *this is what protects the free tier* |
+| shortlisted | **403** | above `shortlist_min_score` |
 | **queued for you** | 15/day cap | because volume is not the goal |
 <!-- funnel:end -->
 
@@ -392,14 +392,44 @@ make review      # dashboard on 127.0.0.1:8080 -- you apply from here
 `make daily` runs `ingest -> score -> prepare -> pdf -> notify -> track ->
 readme-stats`. Two things it does that running the stages by hand does not:
 
-- **It sizes `prepare` to the tailor model's remaining budget.** `prepare`
-  spends 2 calls per job, and the free tier allows 20 a day on the tailor
-  model, so the default limit of 15 asks for 30 and dies halfway with 429s.
-- **It falls back when the tailor model is unavailable rather than merely
-  busy.** `tailor.run()` returns how many documents it wrote, so "wrote zero
-  with jobs waiting" is distinguishable from "there was nothing to do" -- and
-  only the first triggers a single retry on the model that has quota. Never a
-  loop: every retry is charged against the cap.
+- **It sizes `prepare` to what the tailor chain can afford.** `prepare` spends
+  2 calls per job (bullets + screening answers). The room is the sum of every
+  configured chain model's remaining daily budget, capped at the number of jobs
+  notify will queue.
+- **Tailoring walks a chain of models, smartest first** (`TAILOR_CHAIN`, see
+  below): one probe per model, and a model that fails is benched for the rest of
+  the run instead of being retried five times against its 20-a-day cap. Only
+  the last model standing gets retries.
+
+#### Where every model call goes
+
+```
+make daily (12:35 IST, launchd)                          model                          calls
+├── ingest
+│   ├── ATS / job-board APIs (greenhouse, lever, ...)    none                           0
+│   └── gmail_alerts: one parse per alert email          MODEL_SCORE (flash-lite)       ~1 per email
+├── score: free prefilter, then one rating per survivor  MODEL_SCORE (flash-lite)       ~250-330 a day
+├── prepare (per shortlisted job, up to notify's cap)
+│   ├── tailor.run -> tailored bullets                   TAILOR_CHAIN, first to answer  1 per job
+│   └── screening.generate_for -> screening answers      TAILOR_CHAIN, first to answer  1 per job
+├── pdf / tex (tectonic, local)                          none                           0
+├── notify (Telegram)                                    none                           0
+└── track: classify replies in Gmail                     MODEL_SCORE (flash-lite)       1 per reply
+
+TAILOR_CHAIN (config.py; ranked by the Artificial Analysis Intelligence Index, 2026-09-27)
+  gemini-flash-latest (= 3.8 Flash) -> gemini-3.7-flash -> groq:qwen/qwen3.8-27b -> gemini-3.6-flash
+  -> gemini-3.5-flash -> ollama:nemotron-3-ultra -> gemini-flash-lite-latest -> ollama:gemma4:31b
+  -> gemini-3.1-flash-lite -> ollama:nemotron-3-super -> groq:openai/gpt-oss-120b -> ollama:gpt-oss:120b
+
+Every call, any provider: redact() -> per-model daily budget + RPM window -> one request
+-> appended to data/llm_usage.jsonl -> "AI models used, last 48 h" on the review dashboard
+```
+
+Only providers whose policy says they do **not** train on API prompts may join
+the chain (Groq, Ollama Cloud; Gemini was here first and the prompt is redacted
+before it leaves). `llm.PROVIDERS` holds the list with the policy it was checked
+against; an unknown prefix such as `mistral:` is refused, never sent. A provider
+with no key in `.env` is skipped.
 
 A failing stage does not abort the rest, and the summary at the end names what
 broke. Run it **after 12:30 IST** -- Google rolls the free-tier day at midnight
@@ -656,7 +686,8 @@ See [`deploy/VERCEL.md`](deploy/VERCEL.md).
 
 | | |
 |---|---|
-| Gemini | free tier — **500 requests/day per model**, 10 RPM |
+| Gemini | free tier — **20 requests/day per Flash model, 500 per Flash-Lite model**, 5-15 RPM |
+| Groq, Ollama Cloud (optional, tailor chain) | free tiers; Groq 1,000 requests and 200k tokens a day per model, Ollama monthly credits |
 | ATS APIs | public, no key, no quota |
 | Adzuna | free tier, 1000 calls/month |
 | Gmail IMAP | free, read-only, App Password (no expiry) |
@@ -681,10 +712,11 @@ expensive way:
   counter rolls on the Pacific date so it agrees with Google rather than with
   your laptop.
 
-**Only ever point `MODEL_*` at a `-latest` alias.** A pinned version such as
-`gemini-3.6-flash` reports a free-tier quota of **20 requests a day** — enough
-for six prepared applications. The aliases are the only names carrying the full
-free quota.
+**An alias and a pinned name draw on the same quota.** `gemini-flash-latest`
+(which answered as `gemini-3.8-flash` on 2026-09-27) and the pinned Flash models
+each allow **20 requests a day**; the Flash-Lite ones 500. The counter keys on
+the name, so the chain lists the alias *or* the pinned name for a model, never
+both.
 
 ---
 
@@ -709,7 +741,9 @@ config/companies.yaml     ATS slugs (the part you maintain by hand)
 scripts/doctor.py         preflight: key, tier, models, config, integrations
 
 src/jobpipe/
-  llm.py                  Gemini over raw REST — rate limit, budget, PII redaction
+  llm.py                  Gemini (raw REST) + Groq / Ollama — the tailor chain, rate limit,
+                          budget, PII redaction
+  usage.py                per-call model usage log + the dashboard's 48-hour summary
   sources/                greenhouse · lever · ashby · adzuna · gmail alerts
                           remotive · remoteok · arbeitnow · jobicy · himalayas
   normalize.py            canonicalisation, fingerprinting, fuzzy dedup
@@ -719,17 +753,17 @@ src/jobpipe/
   screening.py            screening answers; human-only questions carved out
   notify.py               Telegram review queue
   track.py                reply classification + follow-up nudges
-  review_api.py           dashboard; the sole writer of status=applied
+  review_api.py           dashboard; the sole writer of status=applied; /api/models
 
 deploy/                   OCI setup, crontab, cloudflared example
                           run-daily.sh + launcher app + LaunchAgent for macOS
 ```
 
-**Stack** — Python 3.12 · SQLite · httpx · FastAPI · Gemini (raw REST) ·
+**Stack** — Python 3.12 · SQLite · httpx · FastAPI · Gemini (raw REST) · Groq · Ollama Cloud ·
 rapidfuzz · Docker Compose · Cloudflare Tunnel
 
 ```bash
-make test          # 287 tests
+make test          # 409 tests
 ```
 
 ---

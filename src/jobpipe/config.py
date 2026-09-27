@@ -33,6 +33,29 @@ DB_PATH = Path(os.getenv("JOBPIPE_DB", DATA_DIR / "jobpipe.db"))
 # model: separate, much tighter quotas, 429s instantly.
 MODEL_SCORE = os.getenv("MODEL_SCORE", "gemini-flash-lite-latest")
 MODEL_TAILOR = os.getenv("MODEL_TAILOR", "gemini-flash-latest")
+# Tailoring and screening walk this list (llm.generate_json_chain), highest
+# intelligence first, one probe each (the last model standing gets retries). A
+# model whose provider has no key in .env is skipped. Only providers in
+# llm.PROVIDERS can appear (Gemini plus the non-training ones; see there).
+#
+# Ranked 2026-09-27 by the Artificial Analysis Intelligence Index, read live that
+# day (* = from its 2026-09-24 table; those Gemini models have since left the
+# board), every entry probed with a live JSON call the same day:
+#   gemini-flash-latest (= gemini-3.8-flash that day) 41 | gemini-3.7-flash 39* |
+#   groq Qwen3.8 27B 34 (at its highest reasoning setting) | gemini-3.6-flash 34* |
+#   gemini-3.5-flash 33* | ollama Nemotron 3 Ultra 23 | gemini-flash-lite-latest
+#   (= gemini-3.5-flash-lite) 22 | ollama Gemma 4 31B 19 | gemini-3.1-flash-lite 16* |
+#   ollama Nemotron 3 Super 13 | gpt-oss-120b 12 (groq, then ollama).
+# Ties go to the faster provider. Re-rank when models change: scores move.
+TAILOR_CHAIN = [m.strip() for m in os.getenv(
+    "TAILOR_CHAIN",
+    ",".join([
+        MODEL_TAILOR, "gemini-3.7-flash", "groq:qwen/qwen3.8-27b", "gemini-3.6-flash",
+        "gemini-3.5-flash", "ollama:nemotron-3-ultra", "gemini-flash-lite-latest",
+        "ollama:gemma4:31b", "gemini-3.1-flash-lite", "ollama:nemotron-3-super",
+        "groq:openai/gpt-oss-120b", "ollama:gpt-oss:120b",
+    ]),
+).split(",") if m.strip()]
 
 
 class ConfigError(RuntimeError):

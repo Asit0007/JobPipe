@@ -84,6 +84,22 @@
   pre{margin:0;padding:0 18px 18px;white-space:pre-wrap;word-wrap:break-word;
       font-family:var(--mono);font-size:12px;line-height:1.65;color:var(--muted)}
 
+  /* Models used, last 48 h (local dashboard only; site.py strips the panel). */
+  .models{background:var(--panel);border:1px solid var(--rule);margin-bottom:24px}
+  .models table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .models th{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);font-weight:500;text-align:left;padding:8px 12px;border-bottom:1px solid var(--rule)}
+  .models td{padding:8px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+  .models tr:last-child td{border-bottom:0}
+  .models td.n{font-family:var(--mono);text-align:right;white-space:nowrap}
+  .models .m{font-family:var(--mono);font-size:12px;word-break:break-all}
+  .models .p{color:var(--muted);font-size:11px}
+  .models .bad{color:#C97A7A} .models .okc{color:var(--good)}
+  .models .why{color:var(--muted);font-size:11.5px}
+  .models .app{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--signal);padding:12px 12px 4px}
+  .models .note{font-size:11.5px;color:var(--muted);padding:10px 12px 14px}
+  @media(max-width:620px){.models .why,.models th.why{display:none}}
   .empty{border:1px dashed var(--rule);padding:44px 20px;text-align:center;color:var(--muted)}
   .empty code{font-family:var(--mono);color:var(--cool);font-size:13px}
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -102,6 +118,12 @@
     own site, then come back and record it. That boundary is why your LinkedIn and
     Naukri accounts stay intact.
   </div>
+  <!-- local-only:start -->
+  <details class="models" id="models">
+    <summary>AI models used &middot; last 48 h <span id="models-count"></span></summary>
+    <div id="models-body"><p class="note">Loading&hellip;</p></div>
+  </details>
+  <!-- local-only:end -->
   <div id="list"></div>
 </main>
 
@@ -192,6 +214,46 @@ list.addEventListener('click', async e => {
 });
 
 load();
+
+// local-only:start
+// Every model JobPipe and ContentPipe called in the last 48 h (/api/models, usage.py).
+// Loaded on its own, so a missing log can never blank the queue above it.
+async function loadModels(){
+  const body = document.getElementById('models-body');
+  const esc = t => String(t==null?'':t).replace(/[&<>"]/g,
+    m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+  const ago = iso => {
+    const min = Math.round((Date.now() - Date.parse(iso)) / 60000);
+    return min < 60 ? `${min} min ago` : min < 2880 ? `${Math.round(min/60)} h ago` : `${Math.round(min/1440)} d ago`;
+  };
+  let data;
+  try { data = await fetch('/api/models').then(r => r.json()); }
+  catch(e){ body.innerHTML = '<p class="note">Could not read the usage logs.</p>'; return; }
+  const rows = data.models || [];
+  document.getElementById('models-count').textContent = `(${rows.length} model${rows.length===1?'':'s'})`;
+  if(!rows.length){ body.innerHTML = '<p class="note">No model calls recorded in this window.</p>'; return; }
+  let html = '', app = null, approx = false;
+  for(const m of rows){
+    if(m.app !== app){
+      if(app !== null) html += '</tbody></table>';
+      app = m.app;
+      html += `<div class="app">${esc(app)}</div><table><thead><tr><th>Model</th><th class="n">Calls</th>
+        <th class="n">OK</th><th class="n">Failed</th><th>Last used</th><th class="why">Last problem</th></tr></thead><tbody>`;
+    }
+    const mark = m.reconstructed ? '&thinsp;&asymp;' : '';
+    approx = approx || m.reconstructed > 0;
+    html += `<tr><td><div class="m">${esc(m.model)}</div><div class="p">${esc(m.provider)}${
+        m.tasks && m.tasks.length ? ' &middot; ' + esc(m.tasks.join(', ')) : ''}</div></td>
+      <td class="n">${m.calls}${mark}</td><td class="n okc">${m.ok}</td>
+      <td class="n ${m.failed ? 'bad' : ''}">${m.failed}</td>
+      <td class="n">${ago(m.last_used)}</td><td class="why">${esc(m.last_problem || '')}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  if(approx) html += '<p class="note">&asymp; includes totals rebuilt from daily logs for the hours before per-call logging began.</p>';
+  body.innerHTML = html;
+}
+loadModels();
+// local-only:end
 </script>
 </body>
 </html>

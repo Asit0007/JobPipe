@@ -70,6 +70,14 @@ def skip(job_id: int):
     return {"ok": True}
 
 
+@app.get("/api/models")
+def models(hours: int = 48):
+    """Every AI model JobPipe and ContentPipe called in the window (usage.py). Local only:
+    site.py strips the panel that reads this from the public export."""
+    from . import usage
+    return JSONResponse(usage.aggregate(hours=max(1, min(hours, 24 * 14))))
+
+
 @app.get("/api/stats")
 def stats():
     from .llm import budget_remaining

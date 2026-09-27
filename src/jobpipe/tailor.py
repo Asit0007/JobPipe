@@ -20,8 +20,8 @@ import json
 from pathlib import Path
 
 from . import cooldown, db, render, screening
-from .config import MODEL_TAILOR, OUT_DIR, facts
-from .llm import QuotaExhausted, generate_json
+from .config import OUT_DIR, TAILOR_CHAIN, facts
+from .llm import QuotaExhausted, generate_json_chain
 
 PROMPT = """Select and rephrase resume bullets for a specific job application.
 
@@ -116,12 +116,14 @@ def _menu() -> tuple[str, dict]:
 def run(log=print, limit: int = 15, model: str | None = None) -> int:
     """Tailor the top `limit` shortlisted jobs. Returns how many were written.
 
-    `model` overrides MODEL_TAILOR for this call. `cli daily` uses it to fall
-    back to flash-lite when the better model is 503ing -- measured 2026-09-01,
-    gemini-flash-latest returned 503 on all five retries and burned a quarter
-    of its 20/day cap producing nothing. Returning the count is what lets the
-    caller tell "the model is sick" from "there was nothing to do".
+    With no `model`, each job walks TAILOR_CHAIN (llm.generate_json_chain): one
+    probe per model, a failed model benched for the rest of the run. That
+    replaces five paid retries against a 503ing gemini-flash-latest (measured
+    2026-09-01, and daily again 2026-09-25..27). `model` pins one model instead;
+    `cli daily`'s explicit fallback stage uses it. Returning the count is what
+    lets the caller tell "the model is sick" from "there was nothing to do".
     """
+    models = [model] if model else TAILOR_CHAIN
     menu, meta = _menu()
     if not meta["allowed"]:
         log("! No verified facts. Open config/facts.yaml and flip `verified: true`")
@@ -136,13 +138,13 @@ def run(log=print, limit: int = 15, model: str | None = None) -> int:
 
     for job in rows:
         try:
-            out = generate_json(
+            out, tailor_model = generate_json_chain(
                 PROMPT.format(
                     menu=menu, title=job["title"], company=job["company"],
                     description=(job["description"] or "")[:6000],
                     tailor_notes=job["tailor_notes"] or "none",
                 ),
-                model=model or MODEL_TAILOR, temperature=0.4,
+                models=models, temperature=0.4,
             )
         except QuotaExhausted as e:
             log(f"! {e}")
@@ -184,17 +186,20 @@ def run(log=print, limit: int = 15, model: str | None = None) -> int:
         # dashboard's prepared-doc panel has always implied they exist.
         screen = None
         try:
-            screen = screening.generate_for(job, model=model)
-        except QuotaExhausted:
-            log("  ! budget spent before screening answers; resume prepared without them")
+            screen = screening.generate_for(job, models=models)
+        except QuotaExhausted as e:
+            # Not necessarily budget: the chain also raises this when every model is
+            # benched (503, timeout, 429) or unconfigured. Say which (7.32).
+            log(f"  ! no model could write screening answers ({str(e)[:160]}); resume prepared without them")
         except Exception as e:
             log(f"  screening failed for {job['company']}: {type(e).__name__}")
 
         path = OUT_DIR / f"{job['id']:05d}_{_slug(job['company'])}.md"
         # Screening is a second call and can land on a different model than the
         # bullets -- so it is recorded separately, and left null when it failed.
-        used = {"tailor": model or MODEL_TAILOR,
-                "screening": (model or MODEL_TAILOR) if screen else None}
+        # Both are the model that ANSWERED, which in a chain is not the first one asked.
+        used = {"tailor": tailor_model,
+                "screening": screen.get("model") if screen else None}
         path.write_text(_render(job, out, kept, rejected, screen, flags, models=used))
 
         # The payload is stored so the .tex can be rebuilt for free. Re-running
