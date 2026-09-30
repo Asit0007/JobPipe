@@ -62,6 +62,26 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 
+# launchd replays a missed 12:35 at the next wake, and that wake can be a
+# 10-second maintenance DarkWake with no network (the screener's copy of this
+# wrapper lost 2026-09-23 and 2026-09-29 that way). Only `daily` needs the
+# network; `status` stays a free offline smoke test. The limit counts ATTEMPTS,
+# not wall-clock time: a process frozen by sleep resumes at the next wake and
+# keeps trying, so the run lands on the first real wake.
+wait_for_network() {
+  local url="${NET_CHECK_URL:-https://www.google.com}" tries="${NET_WAIT_TRIES:-60}" i
+  for ((i = 1; i <= tries; i++)); do
+    curl -sI --max-time 5 -o /dev/null "$url" && return 0
+    [ "$i" -eq 1 ] && echo "-- no network yet, waiting (up to $tries tries)"
+    sleep "${NET_WAIT_SLEEP:-10}"
+  done
+  echo "! no network after $tries tries -- nothing was run"
+  return 1
+}
+if [ "${args[0]}" = "daily" ]; then
+  wait_for_network || exit 1
+fi
+
 start=$(date +%s)
 "$PY" -m jobpipe.cli "${args[@]}"
 rc=$?
