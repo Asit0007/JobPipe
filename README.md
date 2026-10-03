@@ -9,7 +9,7 @@ reply tracking all run unattended.
 You apply, on the employer's own site, from a queue of fifteen.
 
 [![tests](https://github.com/Asit0007/JobPipe/actions/workflows/tests.yml/badge.svg)](https://github.com/Asit0007/JobPipe/actions/workflows/tests.yml)
-[![python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![python](https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![cost](https://img.shields.io/badge/running%20cost-%240-success)](#cost)
 
@@ -759,7 +759,7 @@ deploy/                   OCI setup, crontab, cloudflared example
                           run-daily.sh + launcher app + LaunchAgent for macOS
 ```
 
-**Stack** — Python 3.12 · SQLite · httpx · FastAPI · Gemini (raw REST) · Groq · Ollama Cloud ·
+**Stack** — Python 3.14 · SQLite · httpx · FastAPI · Gemini (raw REST) · Groq · Ollama Cloud ·
 rapidfuzz · Docker Compose · Cloudflare Tunnel
 
 ```bash

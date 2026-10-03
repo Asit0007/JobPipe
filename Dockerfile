@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # No texlive here. Output has been markdown since the start, and ~500 MB of
 # LaTeX made every rebuild on the OCI ARM box painful for nothing.
