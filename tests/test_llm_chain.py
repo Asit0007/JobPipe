@@ -11,6 +11,9 @@ Two properties matter more than the plumbing:
    them; a provider not in llm.PROVIDERS is refused, never quietly sent to
    Gemini as a model name.
 """
+import json
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -90,6 +93,76 @@ def test_a_provider_left_out_for_training_on_prompts_is_refused_not_sent_to_gemi
 def test_the_registry_holds_only_providers_with_a_recorded_no_training_policy():
     assert set(llm.PROVIDERS) == {"groq", "ollama"}
     for spec in llm.PROVIDERS.values():
+        assert "no training" in spec["policy"]
+
+
+# --- the shared catalog (LLM_CATALOG) ----------------------------------------
+
+def _catalog(tmp_path, providers):
+    path = tmp_path / "providers.json"
+    path.write_text(json.dumps({"version": 1, "providers": providers}))
+    return path
+
+
+def _entry(pid, trains, **over):
+    return {"id": pid, "label": pid, "baseUrl": f"https://{pid}.example/v1", "keyEnv": [f"{pid.upper()}_API_KEY"],
+            "maxTokensParam": "max_tokens", "maxTokens": 8000, "defaultModels": [], "cost": "free",
+            "trainsOnPrompts": trains, "policy": "no training (test source, 2026-10-07)" if trains is False else "trains", **over}
+
+
+def test_without_a_catalog_the_built_in_registry_is_used():
+    assert llm.providers_from_catalog(None) == llm._BUILTIN_PROVIDERS
+    assert llm.providers_from_catalog("  ") == llm._BUILTIN_PROVIDERS
+
+
+def test_the_catalog_adds_only_non_training_providers_and_removes_a_built_in_it_marks_otherwise(tmp_path):
+    path = _catalog(tmp_path, [
+        _entry("sambanova", False, maxTokensParam="max_tokens"),
+        _entry("mistral", True), _entry("requesty", "depends"), _entry("cerebras", "unknown"),
+        _entry("omniroute", "depends", baseUrl="http://127.0.0.1:20128/v1"),
+        _entry("ollama", "depends"),  # the catalog is the newer record: a built-in it no longer clears goes
+    ])
+    got = llm.providers_from_catalog(path)
+    assert set(got) == {"groq", "sambanova"}
+    assert got["sambanova"] == {"base_url": "https://sambanova.example/v1", "key_envs": ["SAMBANOVA_API_KEY"],
+                                "max_tokens_param": "max_tokens", "policy": "no training (test source, 2026-10-07)"}
+
+
+def test_a_catalog_entry_replaces_the_built_in_of_the_same_id(tmp_path):
+    path = _catalog(tmp_path, [_entry("groq", False, baseUrl="https://api.groq.com/openai/v1",
+                                      keyEnv=["GROQ_API_KEY"], maxTokensParam="max_completion_tokens",
+                                      policy="no training (re-read 2026-10-07)")])
+    assert llm.providers_from_catalog(path)["groq"]["policy"] == "no training (re-read 2026-10-07)"
+
+
+@pytest.mark.parametrize("bad, message", [
+    ({"id": "gemini"}, "bad id"),
+    ({"baseUrl": "http://evil.example/v1"}, "baseUrl"),
+    ({"keyEnv": []}, "keyEnv"),
+    ({"maxTokensParam": "tokens"}, "maxTokensParam"),
+    ({"policy": "we looked"}, "no training"),
+])
+def test_a_malformed_non_training_entry_fails_loudly(tmp_path, bad, message):
+    with pytest.raises(RuntimeError, match=message):
+        llm.providers_from_catalog(_catalog(tmp_path, [_entry("x", False, **bad)]))
+
+
+def test_an_unreadable_catalog_fails_loudly_rather_than_falling_back(tmp_path):
+    with pytest.raises(RuntimeError, match="LLM_CATALOG"):
+        llm.providers_from_catalog(tmp_path / "missing.json")
+    (tmp_path / "v2.json").write_text(json.dumps({"version": 2, "providers": []}))
+    with pytest.raises(RuntimeError, match="version"):
+        llm.providers_from_catalog(tmp_path / "v2.json")
+
+
+def test_the_real_shared_catalog_lets_only_non_training_providers_through():
+    real = Path(__file__).resolve().parents[3] / "LLM-Catalog" / "providers.json"
+    if not real.exists():
+        pytest.skip("LLM-Catalog not checked out beside the company folders")
+    got = llm.providers_from_catalog(real)
+    assert {"groq", "ollama"} <= set(got)
+    assert not set(got) & {"mistral", "requesty", "openrouter", "omniroute", "huggingface", "deepseek", "xai", "cerebras"}
+    for spec in got.values():
         assert "no training" in spec["policy"]
 
 

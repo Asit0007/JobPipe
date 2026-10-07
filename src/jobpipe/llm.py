@@ -29,6 +29,7 @@ import random
 import re
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -369,7 +370,7 @@ REQUEST_TIMEOUT = float(env("GEMINI_TIMEOUT", "240"))
 # Requesty's free Nemotron models ("Training Permitted Models"), and OpenRouter
 # `:free` models (training depends on the upstream provider). Do not add a
 # provider without reading its data policy and recording the source here.
-PROVIDERS: dict[str, dict] = {
+_BUILTIN_PROVIDERS: dict[str, dict] = {
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
         "key_envs": ["GROQ_API_KEY"],
@@ -389,6 +390,55 @@ PROVIDERS: dict[str, dict] = {
         "policy": "no training, transient processing (privacy page, 2026-09-27)",
     },
 }
+
+
+# The shared catalog (LLM_CATALOG, the providers.json in the LLM-Catalog repo,
+# also read by ContentPipe) records every provider once, with its training
+# policy and where and when that was read. Only its `trainsOnPrompts: false`
+# entries come in here, and they replace the built-in entry of the same id; an
+# entry marked anything else (true, "depends", "unknown") removes the provider
+# even if it is built in, because the catalog is the newer record. Without
+# LLM_CATALOG (Docker, CI, a fresh clone) the built-in registry above is used.
+# A configured catalog that is unreadable or malformed raises: a résumé must
+# never reach a provider because a policy record failed to load.
+_LOCAL_URL = re.compile(r"^http://(127\.0\.0\.1|localhost)(:\d+)?(/|$)")
+
+
+def providers_from_catalog(path: str | os.PathLike | None,
+                           builtin: dict[str, dict] = _BUILTIN_PROVIDERS) -> dict[str, dict]:
+    """The provider registry: `builtin`, overlaid by the catalog at `path` (if any)."""
+    out = dict(builtin)
+    if not path or not str(path).strip():
+        return out
+    where = f"LLM_CATALOG {path}"
+    try:
+        doc = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as e:
+        raise RuntimeError(f"{where}: {e}") from e
+    providers = doc.get("providers") if isinstance(doc, dict) and doc.get("version") == 1 else None
+    if not isinstance(providers, list) or not providers:
+        raise RuntimeError(f'{where}: expected {{"version": 1, "providers": [...]}}')
+    for i, p in enumerate(providers):
+        pid = p.get("id") if isinstance(p, dict) else None
+        if not isinstance(pid, str) or not re.fullmatch(r"[a-z][a-z0-9]*", pid) or pid == "gemini":
+            raise RuntimeError(f"{where}: providers[{i}] has a bad id {pid!r}")
+        if p.get("trainsOnPrompts") is not False:
+            out.pop(pid, None)
+            continue
+        url, keys, policy = p.get("baseUrl"), p.get("keyEnv"), p.get("policy")
+        if not isinstance(url, str) or not (url.startswith("https://") or _LOCAL_URL.match(url)) or url.endswith("/"):
+            raise RuntimeError(f"{where}: {pid}: baseUrl must be https:// (http only for localhost), no trailing slash")
+        if not isinstance(keys, list) or not keys or not all(isinstance(k, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", k) for k in keys):
+            raise RuntimeError(f"{where}: {pid}: keyEnv must be a non-empty list of env var names")
+        if p.get("maxTokensParam") not in ("max_tokens", "max_completion_tokens"):
+            raise RuntimeError(f"{where}: {pid}: bad maxTokensParam")
+        if not isinstance(policy, str) or "no training" not in policy:
+            raise RuntimeError(f'{where}: {pid}: trainsOnPrompts is false but its policy does not say "no training" with a source')
+        out[pid] = {"base_url": url, "key_envs": keys, "max_tokens_param": p["maxTokensParam"], "policy": policy}
+    return out
+
+
+PROVIDERS: dict[str, dict] = providers_from_catalog(env("LLM_CATALOG"))
 
 
 def split_model(name: str) -> tuple[str, str]:

@@ -16,6 +16,13 @@ import yaml
 from dotenv import load_dotenv
 
 load_dotenv()
+# The shared LLM keys file that ContentPipe reads too (~/.config/asitminz/llm.env;
+# LLM_SHARED_ENV names another path, "off" skips it), so a provider key is set
+# once. It also carries LLM_CATALOG (see llm.PROVIDERS). Loaded after .env and
+# never overriding, so the shell, then .env, then this file: .env still wins.
+_SHARED_ENV = (os.getenv("LLM_SHARED_ENV") or "").strip()
+if _SHARED_ENV != "off":
+    load_dotenv(_SHARED_ENV or Path.home() / ".config" / "asitminz" / "llm.env")
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = ROOT / "config"

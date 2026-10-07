@@ -10,3 +10,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("JOBPIPE_DB", tempfile.mktemp(suffix=".db"))
 # Same for the model-usage log (usage.py): a test's fake calls must never land in data/.
 os.environ.setdefault("JOBPIPE_USAGE_LOG", tempfile.mktemp(suffix=".jsonl"))
+# The shared LLM keys file and catalog (config.py, llm.PROVIDERS) are the
+# owner's machine state: tests see the built-in provider registry only.
+os.environ["LLM_SHARED_ENV"] = "off"
+os.environ["LLM_CATALOG"] = ""
