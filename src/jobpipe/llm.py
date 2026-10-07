@@ -227,6 +227,9 @@ DEFAULT_MODEL_CAPS = {
     #   SambaNova (2026-10-07): 20 requests/day per model on the free tier (published),
     #   and only gemma-4-31B-it is free on this account; the rest answer 402.
     "sambanova:gemma-4-31B-it": 20,
+    #   Z.AI (2026-10-07): free Flash limits are not published; a guard like Groq's.
+    "zai:glm-4.7-flash": 40,
+    "zai:glm-4.5-flash": 40,
     "ollama:nemotron-3-super": 20,
     "ollama:gpt-oss:120b": 20,
     #   Same Groq account and limits as Qwen above.
