@@ -77,12 +77,12 @@ a model:
 <!-- funnel:start -->
 | stage | count | |
 |---|---:|---|
-| ingested | **18,281** | 10 sources, deduplicated |
-| killed on keywords | -8,293 | fewer than 2 must-haves present |
-| killed on title | -4,664 | sales roles whose JD lists your whole toolchain |
-| killed on hard rejects | -841 | seniority, shift work, geography |
-| **reach an LLM call** | **4,483** | 24% - *this is what protects the free tier* |
-| shortlisted | **403** | above `shortlist_min_score` |
+| ingested | **22,117** | 10 sources, deduplicated |
+| killed on keywords | -10,233 | fewer than 2 must-haves present |
+| killed on title | -5,538 | sales roles whose JD lists your whole toolchain |
+| killed on hard rejects | -985 | seniority, shift work, geography |
+| **reach an LLM call** | **5,361** | 24% - *this is what protects the free tier* |
+| shortlisted | **363** | above `shortlist_min_score` |
 | **queued for you** | 15/day cap | because volume is not the goal |
 <!-- funnel:end -->
 
@@ -419,15 +419,18 @@ make daily (12:35 IST, launchd)                          model                  
 TAILOR_CHAIN (config.py; ranked by the Artificial Analysis Intelligence Index, 2026-09-27)
   gemini-flash-latest (= 3.8 Flash) -> gemini-3.7-flash -> groq:qwen/qwen3.8-27b -> gemini-3.6-flash
   -> gemini-3.5-flash -> ollama:nemotron-3-ultra -> gemini-flash-lite-latest -> ollama:gemma4:31b
-  -> gemini-3.1-flash-lite -> ollama:nemotron-3-super -> groq:openai/gpt-oss-120b -> ollama:gpt-oss:120b
+  -> gemini-3.1-flash-lite -> zai:glm-4.7-flash -> ollama:nemotron-3-super -> groq:openai/gpt-oss-120b
+  -> ollama:gpt-oss:120b -> zai:glm-4.5-flash
 
 Every call, any provider: redact() -> per-model daily budget + RPM window -> one request
 -> appended to data/llm_usage.jsonl -> "AI models used, last 48 h" on the review dashboard
 ```
 
 Only providers whose policy says they do **not** train on API prompts may join
-the chain (Groq, Ollama Cloud; Gemini was here first and the prompt is redacted
-before it leaves). `llm.PROVIDERS` holds the list with the policy it was checked
+the chain (Groq, Ollama Cloud, and since 2026-10-07 Z.AI; Gemini was here first and the
+prompt is redacted before it leaves). Since 2026-10-07 the list can come from the shared
+`LLM_CATALOG` (`providers.json` in the LLM-Catalog repo, read by ContentPipe too): only
+its `trainsOnPrompts: false` entries are taken. `llm.PROVIDERS` holds the list with the policy it was checked
 against; an unknown prefix such as `mistral:` is refused, never sent. A provider
 with no key in `.env` is skipped.
 
@@ -687,7 +690,7 @@ See [`deploy/VERCEL.md`](deploy/VERCEL.md).
 | | |
 |---|---|
 | Gemini | free tier — **20 requests/day per Flash model, 500 per Flash-Lite model**, 5-15 RPM |
-| Groq, Ollama Cloud (optional, tailor chain) | free tiers; Groq 1,000 requests and 200k tokens a day per model, Ollama monthly credits |
+| Groq, Ollama Cloud, Z.AI (optional, tailor chain) | free tiers; Groq 1,000 requests and 200k tokens a day per model, Ollama monthly credits, Z.AI's GLM Flash models free (limits unpublished) |
 | ATS APIs | public, no key, no quota |
 | Adzuna | free tier, 1000 calls/month |
 | Gmail IMAP | free, read-only, App Password (no expiry) |
