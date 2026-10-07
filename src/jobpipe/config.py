@@ -51,7 +51,8 @@ MODEL_TAILOR = os.getenv("MODEL_TAILOR", "gemini-flash-latest")
 #   gemini-flash-latest (= gemini-3.8-flash that day) 41 | gemini-3.7-flash 39* |
 #   groq Qwen3.8 27B 34 (at its highest reasoning setting) | gemini-3.6-flash 34* |
 #   gemini-3.5-flash 33* | ollama Nemotron 3 Ultra 23 | gemini-flash-lite-latest
-#   (= gemini-3.5-flash-lite) 22 | ollama Gemma 4 31B 19 | gemini-3.1-flash-lite 16* |
+#   (= gemini-3.5-flash-lite) 22 | ollama Gemma 4 31B 19 (then the same model on
+#   SambaNova, added 2026-10-07: free preview, 20/day, slower) | gemini-3.1-flash-lite 16* |
 #   ollama Nemotron 3 Super 13 | gpt-oss-120b 12 (groq, then ollama).
 # Ties go to the faster provider. Re-rank when models change: scores move.
 TAILOR_CHAIN = [m.strip() for m in os.getenv(
@@ -59,7 +60,8 @@ TAILOR_CHAIN = [m.strip() for m in os.getenv(
     ",".join([
         MODEL_TAILOR, "gemini-3.7-flash", "groq:qwen/qwen3.8-27b", "gemini-3.6-flash",
         "gemini-3.5-flash", "ollama:nemotron-3-ultra", "gemini-flash-lite-latest",
-        "ollama:gemma4:31b", "gemini-3.1-flash-lite", "ollama:nemotron-3-super",
+        "ollama:gemma4:31b", "sambanova:gemma-4-31B-it",
+        "gemini-3.1-flash-lite", "ollama:nemotron-3-super",
         "groq:openai/gpt-oss-120b", "ollama:gpt-oss:120b",
     ]),
 ).split(",") if m.strip()]

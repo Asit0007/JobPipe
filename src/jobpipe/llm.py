@@ -224,6 +224,9 @@ DEFAULT_MODEL_CAPS = {
     #   published; 20/day keeps one run from spending the month.
     "ollama:nemotron-3-ultra": 20,
     "ollama:gemma4:31b": 20,
+    #   SambaNova (2026-10-07): 20 requests/day per model on the free tier (published),
+    #   and only gemma-4-31B-it is free on this account; the rest answer 402.
+    "sambanova:gemma-4-31B-it": 20,
     "ollama:nemotron-3-super": 20,
     "ollama:gpt-oss:120b": 20,
     #   Same Groq account and limits as Qwen above.
