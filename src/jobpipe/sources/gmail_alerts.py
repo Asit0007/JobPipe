@@ -86,7 +86,12 @@ JOB_LINK_HINTS = ("linkedin.com/jobs/view", "naukri.com/job-listings", "indeed.c
                   "glassdoor.co.in/partner/joblisting",
                   # The UNWRAPPED foundit target -- see _unwrap. Measured off a
                   # real alert on 2026-09-13, never guessed (7.35).
-                  "foundit.in/job/")
+                  "foundit.in/job/",
+                  # Naukri's alert mail links to /jd/job-listings-..., which the
+                  # bare "naukri.com/job-listings" hint above never matched: 5
+                  # Naukri rows in total until 2026-10-11. Measured off real
+                  # job_alerts_jasp mail that day, never guessed (7.35).
+                  "naukri.com/jd/job-listings")
 
 # How far from a title a link may sit and still be considered its link. Anchor
 # markup puts the href just before the visible text, so the window is asymmetric
@@ -204,6 +209,19 @@ def _unwrap(url: str) -> str:
     return _disarm(url)
 
 
+def _jobs_in(parsed) -> list[dict]:
+    """The postings in a model reply, whatever shape it came back in.
+
+    The prompt asks for {"jobs": [...]}, and the model now and then answers with
+    the bare list instead. `parsed.get` on that list raised outside the per-email
+    try, killed the whole source and threw away every email already read in
+    the run -- all alert mail lost on 2026-10-01 and 2026-10-11. A list is
+    taken as the jobs; anything else, or a non-dict entry, yields nothing.
+    """
+    items = parsed.get("jobs", []) if isinstance(parsed, dict) else parsed
+    return [j for j in items if isinstance(j, dict)] if isinstance(items, list) else []
+
+
 def _job_links(text: str) -> list[tuple[int, str]]:
     """Every posting link, with where it sits in the text. Order preserved.
 
@@ -312,7 +330,7 @@ def fetch(log=print) -> list[dict]:
             continue
 
         claimed: set[str] = set()
-        for j in parsed.get("jobs", []):
+        for j in _jobs_in(parsed):
             if not j.get("title") or not j.get("company"):
                 continue
             url = _match_link(j["title"], text, links, claimed)

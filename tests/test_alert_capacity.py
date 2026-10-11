@@ -521,3 +521,33 @@ def test_a_refused_chain_entry_does_not_abort_daily(monkeypatch, capsys):
         keys=["GEMINI_API_KEY"])
     assert calls == [(3, None)], calls
     assert "TAILOR_CHAIN entries refused" in capsys.readouterr().out
+
+
+# --- 5. a reply in the wrong shape costs one email, not the whole source ------
+
+def test_a_bare_list_reply_is_read_as_the_jobs(monkeypatch):
+    """2026-10-01 and 2026-10-11: the model answered [..] instead of {"jobs": [..]},
+    `.get` raised outside the per-email try, and every alert email was lost."""
+    body = "DevOps Engineer\\nhttps://www.linkedin.com/jobs/view/123"
+    monkeypatch.delenv("GMAIL_EXTRA_LINK_HINTS", raising=False)
+    monkeypatch.setattr("jobpipe.gmail.search", lambda q, max_results: ["a", "b", "c"])
+    monkeypatch.setattr("jobpipe.gmail.body_text", lambda m: body)
+    monkeypatch.setattr("jobpipe.gmail.headers", lambda m: {"from": "jobs@linkedin.com"})
+    replies = iter([
+        [{"title": "DevOps Engineer", "company": "Acme"}],   # bare list
+        ["not a job", 7],                                    # junk entries
+        "a string",                                          # not JSON-shaped at all
+    ])
+    monkeypatch.setattr(gmail_alerts, "generate_json", lambda *a, **k: next(replies))
+    jobs = gmail_alerts.fetch(log=lambda *_: None)
+    assert [j["title"] for j in jobs] == ["DevOps Engineer"]
+
+
+def test_naukri_alert_links_are_recognised():
+    """Real job_alerts_jasp mail links to /jd/job-listings-..., measured 2026-10-11."""
+    from jobpipe.sources.gmail_alerts import _job_links
+    text = ("Azure DevOps Engineer https://www.naukri.com/jd/job-listings-azure-devops-"
+            "engineer-acme-pune-5-to-10-years-230926017543?xp=1&src=ja20260924911 "
+            "View All Recommendations https://www.naukri.com/mnjuser/recommendedjobs")
+    urls = [u for _, u in _job_links(text)]
+    assert len(urls) == 1 and "/jd/job-listings-azure-devops-engineer" in urls[0]
