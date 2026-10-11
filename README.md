@@ -48,7 +48,7 @@ in response to you clicking a button after you have already submitted.
 
 ```mermaid
 flowchart TD
-    A["<b>sources</b><br/>greenhouse · lever · ashby<br/>remotive · remoteok · arbeitnow<br/>jobicy · himalayas<br/>adzuna · gmail alerts"] --> B["<b>normalize</b><br/>canonicalise · fingerprint · dedup"]
+    A["<b>sources</b><br/>greenhouse · lever · ashby<br/>remotive · remoteok · arbeitnow<br/>jobicy · himalayas · weworkremotely<br/>adzuna · gmail alerts"] --> B["<b>normalize</b><br/>canonicalise · fingerprint · dedup"]
     B --> C[("<b>discovered</b>")]
     C --> D{"<b>prefilter</b><br/>free, deterministic<br/>no LLM call spent"}
     D -->|"81% die here"| E["filtered"]
@@ -77,12 +77,12 @@ a model:
 <!-- funnel:start -->
 | stage | count | |
 |---|---:|---|
-| ingested | **22,117** | 10 sources, deduplicated |
-| killed on keywords | -10,233 | fewer than 2 must-haves present |
-| killed on title | -5,538 | sales roles whose JD lists your whole toolchain |
-| killed on hard rejects | -985 | seniority, shift work, geography |
-| **reach an LLM call** | **5,361** | 24% - *this is what protects the free tier* |
-| shortlisted | **363** | above `shortlist_min_score` |
+| ingested | **23,292** | 10 sources, deduplicated |
+| killed on keywords | -10,863 | fewer than 2 must-haves present |
+| killed on title | -5,833 | sales roles whose JD lists your whole toolchain |
+| killed on hard rejects | -1,040 | seniority, shift work, geography |
+| **reach an LLM call** | **5,556** | 23% - *this is what protects the free tier* |
+| shortlisted | **268** | above `shortlist_min_score` |
 | **queued for you** | 15/day cap | because volume is not the goal |
 <!-- funnel:end -->
 
@@ -748,7 +748,7 @@ src/jobpipe/
                           budget, PII redaction
   usage.py                per-call model usage log + the dashboard's 48-hour summary
   sources/                greenhouse · lever · ashby · adzuna · gmail alerts
-                          remotive · remoteok · arbeitnow · jobicy · himalayas
+                          remotive · remoteok · arbeitnow · jobicy · himalayas · weworkremotely
   normalize.py            canonicalisation, fingerprinting, fuzzy dedup
   jdfetch.py              descriptions for postings that arrive without one
   score.py                free prefilter → LLM scoring

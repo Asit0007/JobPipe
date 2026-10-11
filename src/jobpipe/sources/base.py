@@ -45,3 +45,9 @@ def get_json(url: str, **kw):
     r = httpx.get(url, headers=UA, timeout=30, follow_redirects=True, **kw)
     r.raise_for_status()
     return r.json()
+
+
+def get_text(url: str, **kw) -> str:
+    r = httpx.get(url, headers=UA, timeout=30, follow_redirects=True, **kw)
+    r.raise_for_status()
+    return r.text

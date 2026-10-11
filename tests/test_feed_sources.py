@@ -150,3 +150,55 @@ def test_all_five_are_registered_and_not_authoritative():
         assert name in ALL_SOURCES
         # Aggregators repost; the fuzzy dedup check must stay switched on here.
         assert name not in AUTHORITATIVE_SOURCES
+
+
+# --- We Work Remotely (RSS, added 2026-10-11) ---------------------------------
+from jobpipe.sources import weworkremotely  # noqa: E402
+
+WWR_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>We Work Remotely</title>
+<link>https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss</link>
+<item>
+  <title>BeyondTrust: Cloud Engineer</title>
+  <region>Anywhere in the World</region>
+  <country>United Kingdom</country>
+  <description>&lt;p&gt;Terraform &amp;amp; AWS&lt;/p&gt;</description>
+  <pubDate>Sat, 10 Oct 2026 07:30:48 +0000</pubDate>
+  <guid>https://weworkremotely.com/remote-jobs/beyondtrust-cloud-engineer</guid>
+  <link>https://weworkremotely.com/remote-jobs/beyondtrust-cloud-engineer</link>
+</item>
+<item>
+  <title>A title with no company separator</title>
+  <guid>https://weworkremotely.com/remote-jobs/x</guid>
+</item>
+</channel></rss>"""
+
+
+def test_wwr_splits_company_from_title_and_uses_the_hiring_region():
+    """<country> is the company's HQ, not where you may work -- region is."""
+    jobs = weworkremotely.parse(WWR_FEED)
+    assert len(jobs) == 1, "an item without 'Company: Title' must be skipped, not guessed"
+    j = jobs[0]
+    assert set(j) == REQUIRED
+    assert (j["company"], j["title"]) == ("BeyondTrust", "Cloud Engineer")
+    assert j["location"] == "Remote (Anywhere in the World)" and j["remote"] == 1
+    assert "United Kingdom" not in j["location"]
+    assert j["description"].startswith("Hiring region: Anywhere in the World")
+    assert "Terraform & AWS" in j["description"]       # double-escaped HTML unwrapped
+    assert j["source_id"] == "beyondtrust-cloud-engineer"
+
+
+def test_wwr_drops_repeats_across_its_two_feeds_and_survives_a_dead_one(monkeypatch):
+    calls = []
+
+    def fake(url):
+        calls.append(url)
+        if len(calls) == 1:
+            raise RuntimeError("feed down")
+        return WWR_FEED
+
+    monkeypatch.setattr(weworkremotely, "get_text", fake)
+    assert len(weworkremotely.fetch(log=lambda *_: None)) == 1
+    calls.clear()
+    monkeypatch.setattr(weworkremotely, "get_text", lambda url: WWR_FEED)
+    assert len(weworkremotely.fetch(log=lambda *_: None)) == 1, "same job in both feeds counted twice"
