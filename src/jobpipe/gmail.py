@@ -59,6 +59,12 @@ IMAP_PORT = int(env("GMAIL_IMAP_PORT", "993") or 993)
 # the Gmail web UI does, so a query that works in the search box works here.
 # An alert filed under a label and skipped from the inbox is still found.
 IMAP_FOLDER = env("GMAIL_IMAP_FOLDER", "[Gmail]/All Mail")
+# Seconds any one socket operation may wait. imaplib's default is to wait
+# forever, and on 2026-10-06 it did: the connection to imap.gmail.com stayed
+# ESTABLISHED with nothing arriving, `daily` sat in ingest for five days, and
+# launchd will not start a job that is still running -- so every later day's run
+# was skipped without a log line. A timeout fails the source; ingest moves on.
+IMAP_TIMEOUT = float(env("GMAIL_IMAP_TIMEOUT", "60") or 60)
 
 
 class GmailAuthError(RuntimeError):
@@ -86,7 +92,7 @@ def connect() -> imaplib.IMAP4_SSL:
             "must be on first), then put both in .env."
         )
     address, password = creds
-    conn = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+    conn = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, timeout=IMAP_TIMEOUT)
     try:
         conn.login(address, password)
     except imaplib.IMAP4.error as e:

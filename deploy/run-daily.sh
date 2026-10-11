@@ -82,9 +82,33 @@ if [ "${args[0]}" = "daily" ]; then
   wait_for_network || exit 1
 fi
 
+# A watchdog, because launchd starts nothing while the last run is still alive.
+# On 2026-10-06 `daily` hung on a silent IMAP socket for five days, and every
+# scheduled run behind it was skipped with no log line at all. Normal runs take
+# 25-57 minutes; RUN_MAX_MINUTES (default 180) is the point where the run is
+# called stuck and killed, so tomorrow's still fires. Like the network wait,
+# `sleep` does not count time the Mac spends asleep.
 start=$(date +%s)
-"$PY" -m jobpipe.cli "${args[@]}"
+# <&0: a background job otherwise gets /dev/null, and a hand-run `site` loses its prompt.
+"$PY" -m jobpipe.cli "${args[@]}" <&0 &
+child=$!
+limit=$(( ${RUN_MAX_MINUTES:-180} * 60 ))
+# Every step is chained with && to the sleep before it: when the run finishes,
+# the sleep is killed, and nothing after it may run -- least of all a kill aimed
+# at a PID that has finished and may since belong to another process.
+(
+  sleep "$limit" &&
+    echo &&
+    echo "! watchdog: still running after ${RUN_MAX_MINUTES:-180} min -- killing it so the next scheduled run can start" &&
+    kill -TERM "$child" 2>/dev/null &&
+    sleep 30 &&
+    kill -KILL "$child" 2>/dev/null
+) 2>/dev/null &   # its message is on stdout; stderr only carries bash's "Terminated" noise
+watchdog=$!
+wait "$child"
 rc=$?
+pkill -P "$watchdog" 2>/dev/null
+wait "$watchdog" 2>/dev/null
 echo
 echo "--- exit $rc after $(( ($(date +%s) - start) / 60 ))m $(( ($(date +%s) - start) % 60 ))s"
 
