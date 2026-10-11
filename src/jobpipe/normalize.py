@@ -118,6 +118,53 @@ def fingerprint(company: str, title: str, location: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
+def listing_key(company: str, title: str) -> tuple[str, str]:
+    """One vacancy, as the person applying sees it: same employer, same title.
+
+    Location is deliberately left out, unlike the fingerprint. "Azure DevOps
+    Engineer" at Infosys arrived as "India" and as "Hyderabad, Telangana", and
+    PDI's "DevOps Engineer II" as Bengaluru and Hyderabad. Those are rightly two
+    rows (canon_place keeps a nationwide posting apart from a city one), but they
+    are one application -- and the 90-day company cooldown allows only one. Measured
+    2026-10-11: 30 such pairs among 687 queued/prepared/shortlisted/applied rows.
+
+    Seniority is KEPT, unlike canon_title: "Senior SRE" and "SRE" at one employer
+    are two jobs you could apply to separately (see is_near_duplicate).
+    """
+    t = re.sub(r"[^\w\s/+]", " ", (title or "").lower())
+    t = re.sub(_NOISE, " ", t)
+    return canon_company(company), re.sub(r"\s+", " ", t).strip()
+
+
+def collapse_duplicates(jobs: list[dict], closed: set = frozenset()) -> tuple[list[dict], int]:
+    """A listing with each vacancy once. `jobs` must already be sorted best first.
+
+    A job whose listing_key is in `closed` (you applied to, or skipped, its twin)
+    is left out. A later twin of a job already kept is folded INTO it, not dropped
+    in silence: its location goes in the kept card's "location" as "also: ...",
+    and the twin itself in "also", so the other postings stay visible.
+    Returns (listing, how many rows were left out or folded).
+    """
+    kept: dict[tuple[str, str], dict] = {}
+    hidden = 0
+    for j in jobs:
+        key = listing_key(j["company"], j["title"])
+        if key in closed:
+            hidden += 1
+            continue
+        first = kept.get(key)
+        if first is None:
+            kept[key] = {**j, "also": []}
+            continue
+        hidden += 1
+        first["also"].append({"id": j["id"], "location": j.get("location"),
+                              "url": j.get("url"), "source": j.get("source")})
+        others = ", ".join(a["location"] or "location not stated" for a in first["also"])
+        base = first["location"].split(" (also: ")[0] if first["location"] else "location not stated"
+        first["location"] = f"{base} (also: {others})"
+    return list(kept.values()), hidden
+
+
 def is_near_duplicate(a: dict, b: dict, threshold: int = 88) -> bool:
     """Catches what the hash misses: same role, slightly different wording.
 

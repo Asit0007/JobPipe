@@ -103,6 +103,21 @@ def recent_by_company(company_canonical: str, within_days: int = 30) -> list[sql
         ).fetchall()
 
 
+# Statuses after which a vacancy is settled by the human: applied to, heard
+# back from, or passed on. A twin of one of these is not listed again.
+CLOSED = ("applied", "responded", "skipped")
+
+
+def listing_keys(statuses: tuple[str, ...]) -> set[tuple[str, str]]:
+    """normalize.listing_key of every row in `statuses`. Recomputed from company
+    and title, not the stored company_canonical (a cached value, see §10)."""
+    from .normalize import listing_key
+    marks = ",".join("?" * len(statuses))
+    with connect() as c:
+        return {listing_key(r["company"], r["title"]) for r in c.execute(
+            f"SELECT company, title FROM jobs WHERE status IN ({marks})", statuses)}
+
+
 def archive_stale(days: int, statuses: tuple[str, ...] = ("discovered", "scored", "shortlisted")) -> int:
     """Retire postings nobody is going to apply to any more.
 

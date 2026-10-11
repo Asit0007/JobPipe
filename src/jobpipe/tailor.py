@@ -22,6 +22,7 @@ from pathlib import Path
 from . import cooldown, db, render, screening
 from .config import OUT_DIR, TAILOR_CHAIN, facts
 from .llm import QuotaExhausted, generate_json_chain
+from .normalize import listing_key
 
 PROMPT = """Select and rephrase resume bullets for a specific job application.
 
@@ -113,6 +114,28 @@ def _menu() -> tuple[str, dict]:
     return "\n".join(lines), {"allowed": allowed, "blocked": blocked}
 
 
+def candidates(limit: int) -> list:
+    """The shortlisted jobs worth a document, best first, one per vacancy.
+
+    A row whose twin (normalize.listing_key: same company and title, any
+    location) already has a document, an application or a skip is passed over,
+    and so is the second of two twins in the same batch. Measured 2026-10-11:
+    the queue held five such pairs, each one spent 2 tailor calls on a document
+    for a job already in it. The row is left `shortlisted`, not rewritten.
+    """
+    taken = db.listing_keys(("prepared", "queued") + db.CLOSED)
+    out = []
+    for r in db.fetch(status="shortlisted", limit=5000):
+        key = listing_key(r["company"], r["title"])
+        if key in taken:
+            continue
+        taken.add(key)
+        out.append(r)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def run(log=print, limit: int = 15, model: str | None = None) -> int:
     """Tailor the top `limit` shortlisted jobs. Returns how many were written.
 
@@ -132,7 +155,7 @@ def run(log=print, limit: int = 15, model: str | None = None) -> int:
     if meta["blocked"]:
         log(f"note: {len(meta['blocked'])} unverified facts excluded: {', '.join(meta['blocked'][:8])}")
 
-    rows = db.fetch(status="shortlisted", limit=limit)
+    rows = candidates(limit)
     log(f"tailoring {len(rows)} shortlisted jobs")
     written = 0
 

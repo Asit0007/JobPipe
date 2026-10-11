@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from . import cooldown, db
 from .config import TEMPLATE_DIR
 from .db import now
+from .normalize import collapse_duplicates
 
 
 @asynccontextmanager
@@ -54,6 +55,7 @@ def queue():
                                            in_flight=flight_idx),
             })
     out.sort(key=lambda x: x["score"] or 0, reverse=True)
+    out, _ = collapse_duplicates(out, db.listing_keys(db.CLOSED))
     return JSONResponse(out)
 
 

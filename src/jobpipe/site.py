@@ -45,6 +45,7 @@ from pathlib import Path
 
 from . import cooldown, db
 from .config import OUT_DIR, ROOT, TEMPLATE_DIR
+from .normalize import collapse_duplicates
 
 # OWASP's floor for PBKDF2-SHA256 is 600k. The cost is paid once per unlock, in
 # the browser, and a job hunt is worth more than the ~1s it adds on a phone.
@@ -296,6 +297,9 @@ def build(log=print, out_dir: Path | None = None,
                                            in_flight=flight_idx),
             })
     jobs.sort(key=lambda x: x["score"] or 0, reverse=True)
+    jobs, folded = collapse_duplicates(jobs, db.listing_keys(db.CLOSED))
+    if folded:
+        log(f"  {folded} duplicate listing(s) folded into their twin or hidden as already applied/skipped")
 
     with db.connect() as c:
         rows = c.execute("SELECT status, COUNT(*) n FROM jobs GROUP BY status").fetchall()
