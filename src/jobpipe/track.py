@@ -57,6 +57,9 @@ _TITLE_STOP = {"the", "and", "for", "with", "your", "our", "job", "role",
 # that this is application mail, but it is never company-identifying on its own.
 ATS_DOMAINS = ("greenhouse.io", "greenhouse-mail.io", "lever.co", "ashbyhq.com",
                "workable.com", "myworkday.com", "smartrecruiters.com", "icims.com")
+# Hosts an apply link can point at that are never the employer: a WWR row's
+# apply_url is a Google search, its url the WWR posting.
+NOT_EMPLOYER_DOMAINS = ("google.com", "weworkremotely.com")
 
 
 def _tokens(text: str, stop: set[str] = frozenset()) -> set[str]:
@@ -83,7 +86,8 @@ def _signals(job, sender: str, subject: str) -> tuple[int, list[str]]:
 
     # The apply link's own domain, when it is the employer's and not the ATS's.
     dom = _domain(job["apply_url"] or job["url"])
-    if dom and not any(a in dom for a in ATS_DOMAINS) and dom in sender:
+    if (dom and not any(a in dom for a in ATS_DOMAINS + NOT_EMPLOYER_DOMAINS)
+            and dom in sender):
         found.append(f"apply-domain:{dom}")
 
     for tok in company_tokens:

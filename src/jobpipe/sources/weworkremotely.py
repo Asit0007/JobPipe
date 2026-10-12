@@ -11,12 +11,27 @@ Two quirks, both pinned in tests/test_feed_sources.py:
   * <region> is the hiring region ("Anywhere in the World", "North America
     Only"), and <country> is the company's headquarters, not where you may work.
     Location is built from the region so a US-only role says so in the queue.
+
+Applying through WWR needs its paid "Job Seeker Pro" membership (seen 2026-10-12;
+reviews describe a $2.95 trial that becomes $14.95/month on a 12-month term).
+Reading a posting is still free. The owner keeps the search at $0, so `url` stays
+the WWR posting and `apply_url` is a web search for the same role, to apply on
+the employer's own site. The feed has no reliable employer apply link: of 112
+items on 2026-10-12, most outbound links were privacy or legal pages.
 """
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from urllib.parse import quote_plus
 
 from .base import get_text, make_job, strip_html
+
+EMPLOYER_SEARCH = "https://www.google.com/search?q="
+
+
+def employer_search(company: str, title: str) -> str:
+    """A search for the employer's own posting of this role (WWR's apply is paid)."""
+    return EMPLOYER_SEARCH + quote_plus(f'"{company}" "{title}" careers OR jobs')
 
 FEEDS = (
     "https://weworkremotely.com/remote-jobs.rss",
@@ -48,6 +63,7 @@ def parse(xml: str) -> list[dict]:
             title=title.strip(),
             location=f"Remote ({region})" if region else "Remote",
             url=link,
+            apply_url=employer_search(company.strip(), title.strip()),
             description=description,
             posted_at=_text(item, "pubDate") or None,
         ))

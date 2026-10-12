@@ -41,3 +41,16 @@ def test_a_product_newsletter_from_a_similarly_named_company_does_not_match():
 def test_ats_sender_alone_is_never_enough():
     n, why = _signals(JOB, "no-reply@greenhouse.io", "An update on your application")
     assert why == ["ats-sender"] and n < MIN_SIGNALS
+
+
+def test_a_wwr_search_link_is_not_an_employer_domain():
+    """A WWR row's apply_url is a Google search: mail from google.com must not
+    count as the employer's, nor WWR's own newsletters via its url."""
+    wwr = Row(company="BeyondTrust", title="Cloud Engineer",
+              apply_url="https://www.google.com/search?q=x",
+              url="https://weworkremotely.com/remote-jobs/beyondtrust-cloud-engineer")
+    _, why = _signals(wwr, "no-reply@google.com", "Your Google account")
+    assert not [w for w in why if w.startswith("apply-domain")]
+    wwr["apply_url"] = None
+    _, why = _signals(wwr, "hello@weworkremotely.com", "New remote jobs")
+    assert not [w for w in why if w.startswith("apply-domain")]

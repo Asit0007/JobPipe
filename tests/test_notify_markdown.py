@@ -75,3 +75,14 @@ def test_a_fully_successful_run_says_nothing_about_failures(monkeypatch, capsys)
     out = capsys.readouterr().out
     assert "queued 1 for review" in out
     assert "refused" not in out
+
+
+def test_a_wwr_row_links_to_the_employer_search_and_the_free_posting():
+    from jobpipe.sources.weworkremotely import employer_search
+    wwr = {"apply_url": employer_search("BeyondTrust", "Cloud Engineer"),
+           "url": "https://weworkremotely.com/remote-jobs/beyondtrust-cloud-engineer"}
+    line = notify._links(wwr)
+    assert "[Find on employer's site](https://www.google.com/search?q=" in line
+    assert "[Read on WWR](https://weworkremotely.com/remote-jobs/beyondtrust-cloud-engineer)" in line
+    other = {"apply_url": "https://jobs.ashbyhq.com/ramp/123", "url": ""}
+    assert notify._links(other) == "\n\n[Open posting](https://jobs.ashbyhq.com/ramp/123)"

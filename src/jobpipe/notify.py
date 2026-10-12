@@ -12,6 +12,7 @@ import httpx
 from . import cooldown, db
 from .config import env, profile
 from .db import now
+from .sources.weworkremotely import EMPLOYER_SEARCH
 
 API = "https://api.telegram.org/bot{token}/sendMessage"
 
@@ -30,6 +31,15 @@ def _md(value) -> str:
     for ch in _MD_SPECIALS:
         out = out.replace(ch, "\\" + ch)
     return out
+
+
+def _links(job) -> str:
+    """The message's link line. A WWR row's apply link is a search for the
+    employer's own posting, because applying on WWR is paid; say so."""
+    apply = job["apply_url"] or job["url"]
+    if apply.startswith(EMPLOYER_SEARCH):
+        return f"\n\n[Find on employer's site]({apply}) · [Read on WWR]({job['url']})"
+    return f"\n\n[Open posting]({apply})"
 
 
 def _send(text: str) -> bool:
@@ -93,7 +103,7 @@ def run(log=print) -> None:
             applied=applied_idx, in_flight=flight_idx))
         if warn:
             msg += f"\n\n*{_md(warn)}*"
-        msg += f"\n\n[Open posting]({job['apply_url'] or job['url']})"
+        msg += _links(job)
         if _send(msg):
             db.update(job["id"], status="queued", notified_at=now())
             sent += 1

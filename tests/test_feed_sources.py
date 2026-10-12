@@ -202,3 +202,14 @@ def test_wwr_drops_repeats_across_its_two_feeds_and_survives_a_dead_one(monkeypa
     calls.clear()
     monkeypatch.setattr(weworkremotely, "get_text", lambda url: WWR_FEED)
     assert len(weworkremotely.fetch(log=lambda *_: None)) == 1, "same job in both feeds counted twice"
+
+
+def test_wwr_apply_link_is_a_free_employer_search_not_the_paid_wwr_apply():
+    """Applying through WWR is paid (2026-10-12); reading the posting is not."""
+    j = weworkremotely.parse(WWR_FEED)[0]
+    assert j["url"] == "https://weworkremotely.com/remote-jobs/beyondtrust-cloud-engineer"
+    assert j["apply_url"].startswith(weworkremotely.EMPLOYER_SEARCH)
+    assert "weworkremotely" not in j["apply_url"]
+    from urllib.parse import unquote_plus
+    q = unquote_plus(j["apply_url"].split("q=", 1)[1])
+    assert '"BeyondTrust"' in q and '"Cloud Engineer"' in q
