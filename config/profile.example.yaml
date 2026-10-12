@@ -66,6 +66,11 @@ title_reject:
   - accountant
   - controller
 
+# Instant kill on the LOCATION field: a non-remote posting tied only to one of
+# these cities (score.py::location_reject). A listing that also names a city in
+# locations_ok passes. Leave empty to rely on the scorer alone.
+locations_reject: []
+
 # Instant kill. Matched against title + description in a requirements context;
 # see score.py::_hard_reject_hit for why this is not a plain substring test.
 hard_reject:

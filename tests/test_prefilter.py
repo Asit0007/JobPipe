@@ -65,3 +65,30 @@ def test_title_reject_beats_the_keyword_count():
     from jobpipe.score import prefilter
     ok, hits, _ = prefilter(_job("Account Executive", SELLS_YOUR_STACK))
     assert not ok and hits == 0
+
+
+# --- locations_reject (owner, 2026-10-12: no Chennai) -------------------------
+from jobpipe.score import location_reject  # noqa: E402
+
+OK = ["Bengaluru", "Pune", "Kolkata", "Remote", "India"]
+NO = ["Chennai", "Madras"]
+
+
+def test_an_onsite_chennai_posting_is_rejected():
+    assert location_reject("chennai, tamil nadu", False, NO, OK) == "Chennai"
+    assert location_reject("perungalathur, chennai, tamil nadu", False, NO, OK) == "Chennai"
+
+
+def test_india_does_not_rescue_a_rejected_city():
+    assert location_reject("chennai, india", False, NO, OK) == "Chennai"
+
+
+def test_remote_or_multi_city_with_an_accepted_city_passes():
+    assert location_reject("chennai, tamil nadu", True, NO, OK) is None
+    assert location_reject("chennai / bengaluru", False, NO, OK) is None
+
+
+def test_other_cities_and_blank_locations_are_left_to_the_scorer():
+    assert location_reject("mumbai", False, NO, OK) is None
+    assert location_reject("", False, NO, OK) is None
+    assert location_reject("chennai", False, [], OK) is None

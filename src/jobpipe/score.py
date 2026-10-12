@@ -115,6 +115,32 @@ def _is_alert_without_jd(job) -> bool:
     return len((job["description"] or "").strip()) < jdfetch.MIN_USEFUL_CHARS
 
 
+# Never a city, so they cannot rescue a rejected one: "Chennai, India" is Chennai.
+_NOT_A_CITY = {"remote", "india"}
+
+
+def location_reject(location: str, remote: bool, reject, accepted) -> str | None:
+    """The rejected city a non-remote posting is tied to, else None.
+
+    `locations_reject` (profile.yaml) lists cities the owner will not work in
+    (Chennai, 2026-10-12). Matched on the LOCATION field alone, like the remote
+    bonus below, because a JD naming a branch office is not where the role sits.
+    A remote role passes, and so does a multi-city listing that also names an
+    accepted city ("Chennai / Bengaluru"): the owner can take the other one.
+    Free, before any LLM call; the scorer still sees `locations_ok`.
+    """
+    if remote or not location:
+        return None
+    def named(term):
+        return re.search(rf"\b{re.escape(term.lower())}\b", location)
+    hit = next((t for t in reject if named(t)), None)
+    if not hit:
+        return None
+    if any(named(t) for t in accepted if t.lower() not in _NOT_A_CITY):
+        return None
+    return hit
+
+
 def prefilter(job) -> tuple[bool, int, str]:
     p = profile()
     title = (job["title"] or "").lower()
@@ -132,6 +158,12 @@ def prefilter(job) -> tuple[bool, int, str]:
     for term in p.get("hard_reject", []):
         if _hard_reject_hit(term.lower(), blob):
             return False, 0, f"hard reject: {term}"
+
+    city = location_reject(_column(job, "location"), _is_remote(job),
+                           p.get("locations_reject", []) or [],
+                           p["identity"].get("locations_ok", []))
+    if city:
+        return False, 0, f"location reject: {city}"
 
     hits = sum(1 for kw in p["must_have_any"] if kw.lower() in blob)
 
