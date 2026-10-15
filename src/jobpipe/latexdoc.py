@@ -585,7 +585,7 @@ def _footer(doc: dict, idx: dict, cfg: dict, words: int) -> str:
           "%  [ ] Every bullet traces to a fact ID above (the generator enforces this)",
           "%  [ ] No claim from facts.yaml never_claim appears anywhere",
           "%  [ ] No metric that is not in the fact text it came from",
-          "%  [ ] On-call written as L1/L2, never L2/L3",
+          "%  [ ] On-call written as L2/L3 (owner, 2026-10-15)",
           "%  [ ] Magento never called idempotent or production-grade",
           "%  [ ] 97 percent claims the measurement, not the architecture as its cause (B002)",
           "%  [ ] Magento repo URL omitted (blocker B001 unresolved)",
