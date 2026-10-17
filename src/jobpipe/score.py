@@ -282,6 +282,24 @@ def apply_penalties(score: int, job) -> tuple[int, list[str]]:
     return max(0, min(100, score)), applied
 
 
+def _reply(result) -> dict | None:
+    """The scorer's reply as a dict with an int `score`, or None if it isn't one.
+
+    2026-10-16: a model answered with a JSON array, and `result.get` raised
+    AttributeError outside the per-job try, which ended the whole score stage
+    with 504 jobs unscored. A one-item array is unwrapped; anything else is
+    refused, and the job stays 'discovered' for the next run.
+    """
+    if isinstance(result, list) and len(result) == 1:
+        result = result[0]
+    if not isinstance(result, dict):
+        return None
+    try:
+        return {**result, "score": int(result.get("score", 0))}
+    except (TypeError, ValueError):
+        return None
+
+
 def run(log=print) -> None:
     p = profile()
     skills = facts().get("skills", {})
@@ -330,7 +348,13 @@ def run(log=print) -> None:
             log(f"  score failed for {job['title'][:40]}: {type(e).__name__}")
             continue
 
-        raw = int(result.get("score", 0))
+        reply = _reply(result)
+        if reply is None:
+            log(f"  score failed for {job['title'][:40]}: reply was "
+                f"{type(result).__name__}, not an object with a numeric score")
+            continue
+        result = reply
+        raw = result["score"]
         final, penalties = apply_penalties(raw, job)
         reason = result.get("reason", "")
         if penalties:
