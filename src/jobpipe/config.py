@@ -55,11 +55,13 @@ MODEL_TAILOR = os.getenv("MODEL_TAILOR", "gemini-flash-latest")
 #   and removed 2026-10-07: its free tier answered 402 "payment method required") | gemini-3.1-flash-lite 16* |
 #   zai GLM-4.7-Flash ~15 (current AA index, 2026-10-07) | ollama Nemotron 3 Super 13 | gpt-oss-120b 12 (groq, then ollama).
 # zai GLM-4.5-Flash has no score and goes last (2026-10-07).
+# 2026-10-20: ollama MiniMax M3.1 Flash 42.7 (AA, read through its API) goes first,
+# above gemini-3.8-flash 40.9; one live JSON call passed. Ollama does not train on prompts.
 # Ties go to the faster provider. Re-rank when models change: scores move.
 TAILOR_CHAIN = [m.strip() for m in os.getenv(
     "TAILOR_CHAIN",
     ",".join([
-        MODEL_TAILOR, "gemini-3.7-flash", "groq:qwen/qwen3.8-27b", "gemini-3.6-flash",
+        "ollama:minimax-m3.1-flash", MODEL_TAILOR, "gemini-3.7-flash", "groq:qwen/qwen3.8-27b", "gemini-3.6-flash",
         "gemini-3.5-flash", "ollama:nemotron-3-ultra", "gemini-flash-lite-latest",
         "ollama:gemma4:31b", "gemini-3.1-flash-lite", "zai:glm-4.7-flash", "ollama:nemotron-3-super",
         "groq:openai/gpt-oss-120b", "ollama:gpt-oss:120b", "zai:glm-4.5-flash",

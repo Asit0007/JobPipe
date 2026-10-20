@@ -222,6 +222,7 @@ DEFAULT_MODEL_CAPS = {
     "groq:qwen/qwen3.8-27b": 40,
     #   Ollama Cloud's free plan is monthly credits with no per-day figure
     #   published; 20/day keeps one run from spending the month.
+    "ollama:minimax-m3.1-flash": 20,      # first in the chain since 2026-10-20
     "ollama:nemotron-3-ultra": 20,
     "ollama:gemma4:31b": 20,
     #   Z.AI (2026-10-07): free Flash limits are not published; a guard like Groq's.
