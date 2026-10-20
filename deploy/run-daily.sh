@@ -82,6 +82,18 @@ if [ "${args[0]}" = "daily" ]; then
   wait_for_network || exit 1
 fi
 
+# The profile refresh (CLAUDE.md section 2) rides on this firing instead of having
+# its own LaunchAgent (owner, 2026-10-20). It is in the private overlay, so a
+# clone without it skips this. It writes its own log and Telegram line, and its
+# exit status never stops the pipeline. SKIP_PROFILE_REFRESH=1 leaves it out.
+if [ "${args[0]}" = "daily" ] && [ -f "$ROOT/deploy/run-profile-refresh.sh" ] &&
+  [ -z "${SKIP_PROFILE_REFRESH:-}" ]; then
+  echo "-- profile refresh first"
+  /bin/bash "$ROOT/deploy/run-profile-refresh.sh" </dev/null ||
+    echo "! profile refresh exited $? -- the pipeline runs anyway"
+  echo
+fi
+
 # A watchdog, because launchd starts nothing while the last run is still alive.
 # On 2026-10-06 `daily` hung on a silent IMAP socket for five days, and every
 # scheduled run behind it was skipped with no log line at all. Normal runs take
