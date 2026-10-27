@@ -23,7 +23,8 @@
 # model is 503ing, and no pdf stage, which is how ten PDFs went missing on
 # 2026-09-01. daily also runs track and readme-stats.
 
-# Reply tracking is cheap, spends no LLM budget, and is worth running more
+# Reply tracking is cheap (one flash-lite call per application email, and an
+# email it has handled is never read again) and is worth running more
 # often than the pipeline. These stay in the morning on purpose -- a reply that
 # landed overnight is worth seeing with coffee.
    0   7    *   *  1-5  python -u -m jobpipe.cli track

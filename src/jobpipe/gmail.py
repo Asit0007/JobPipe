@@ -44,6 +44,7 @@ from __future__ import annotations
 import email
 import imaplib
 import re
+from contextlib import contextmanager
 from email.header import decode_header, make_header
 from email.message import Message
 from pathlib import Path
@@ -111,40 +112,107 @@ def _quote(query: str) -> str:
     return '"' + query.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _search_imap(query: str, max_results: int) -> list[Message]:
-    conn = connect()
+def _close(conn: imaplib.IMAP4_SSL) -> None:
     try:
-        ok, _ = conn.select(_quote(IMAP_FOLDER), readonly=True)
-        if ok != "OK":
-            raise GmailAuthError(
-                f"Could not open the mailbox {IMAP_FOLDER!r}. Set GMAIL_IMAP_FOLDER "
-                f"if your account uses localised Gmail folder names."
-            )
-        # X-GM-RAW takes Gmail search syntax verbatim -- see the module docstring.
-        typ, data = conn.uid("SEARCH", "X-GM-RAW", _quote(query))
-        if typ != "OK":
-            raise GmailAuthError(f"Gmail IMAP search failed: {data!r}")
-        uids = (data[0] or b"").split()
-        # UIDs ascend with arrival, so the newest are last. Both callers want
-        # recent mail, and the Gmail API returned newest-first.
-        uids = uids[-max_results:][::-1]
+        conn.close()
+    except Exception:
+        pass
+    try:
+        conn.logout()
+    except Exception:
+        pass
 
-        out: list[Message] = []
-        for uid in uids:
-            typ, payload = conn.uid("FETCH", uid, "(BODY.PEEK[])")
-            if typ != "OK" or not payload or not isinstance(payload[0], tuple):
-                continue
-            out.append(email.message_from_bytes(payload[0][1]))
-        return out
+
+def _open() -> imaplib.IMAP4_SSL:
+    """A logged-in, read-only session on IMAP_FOLDER."""
+    conn = connect()
+    ok, _ = conn.select(_quote(IMAP_FOLDER), readonly=True)
+    if ok != "OK":
+        _close(conn)
+        raise GmailAuthError(
+            f"Could not open the mailbox {IMAP_FOLDER!r}. Set GMAIL_IMAP_FOLDER "
+            f"if your account uses localised Gmail folder names."
+        )
+    return conn
+
+
+def _uids(conn: imaplib.IMAP4_SSL, query: str) -> list[bytes]:
+    """Every UID matching a Gmail search. UIDs ascend with arrival, so the
+    newest are last."""
+    # X-GM-RAW takes Gmail search syntax verbatim -- see the module docstring.
+    typ, data = conn.uid("SEARCH", "X-GM-RAW", _quote(query))
+    if typ != "OK":
+        raise GmailAuthError(f"Gmail IMAP search failed: {data!r}")
+    return (data[0] or b"").split()
+
+
+def _fetch_one(conn: imaplib.IMAP4_SSL, uid: bytes) -> Message | None:
+    typ, payload = conn.uid("FETCH", uid, "(BODY.PEEK[])")
+    if typ != "OK" or not payload or not isinstance(payload[0], tuple):
+        return None
+    return email.message_from_bytes(payload[0][1])
+
+
+def _search_imap(query: str, max_results: int) -> list[Message]:
+    conn = _open()
+    try:
+        # Both callers want recent mail, and the Gmail API returned newest-first.
+        uids = _uids(conn, query)[-max_results:][::-1]
+        return [m for m in (_fetch_one(conn, uid) for uid in uids) if m is not None]
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-        try:
-            conn.logout()
-        except Exception:
-            pass
+        _close(conn)
+
+
+# Enough to decide whether a message is worth downloading. Message-ID is what
+# track.py remembers a message by, so a re-read window never reports it twice.
+HEADER_FIELDS = "FROM SUBJECT DATE MESSAGE-ID"
+HEADER_BATCH = 200
+_UID_RE = re.compile(rb"\bUID (\d+)")
+
+
+def _headers_imap(conn: imaplib.IMAP4_SSL, query: str, max_results: int) -> list[dict]:
+    uids = _uids(conn, query)[-max_results:]
+    out: list[dict] = []
+    for i in range(0, len(uids), HEADER_BATCH):
+        chunk = b",".join(uids[i:i + HEADER_BATCH])
+        typ, payload = conn.uid("FETCH", chunk,
+                                f"(BODY.PEEK[HEADER.FIELDS ({HEADER_FIELDS})])")
+        if typ != "OK":
+            raise GmailAuthError(f"Gmail IMAP header fetch failed: {payload!r}")
+        # One (b"<seq> (UID <uid> BODY[...] {n}", b"<headers>") tuple per
+        # message, each followed by a bare b")".
+        for part in payload or []:
+            if not isinstance(part, tuple):
+                continue
+            m = _UID_RE.search(part[0])
+            if m:
+                out.append({"id": m.group(1).decode(),
+                            "headers": headers(email.message_from_bytes(part[1]))})
+    # FETCH answers in mailbox order, not in the order asked.
+    out.sort(key=lambda r: int(r["id"]), reverse=True)
+    return out
+
+
+class _ImapSession:
+    def __init__(self):
+        self.conn = _open()
+
+    def search_ids(self, query: str, max_results: int = 500) -> set[str]:
+        return {u.decode() for u in _uids(self.conn, query)}
+
+    def search_headers(self, query: str, max_results: int = 500) -> list[dict]:
+        return _headers_imap(self.conn, query, max_results)
+
+    def fetch(self, ids) -> dict[str, Message]:
+        out: dict[str, Message] = {}
+        for i in ids:
+            msg = _fetch_one(self.conn, i.encode())
+            if msg is not None:
+                out[i] = msg
+        return out
+
+    def close(self) -> None:
+        _close(self.conn)
 
 
 # ---------------------------------------------------------------------------
@@ -179,11 +247,34 @@ def service():
     return build("gmail", "v1", credentials=creds)
 
 
-def _search_api(query: str, max_results: int) -> list[dict]:
+def _list_api(query: str, max_results: int) -> list[dict]:
     svc = service()
     res = svc.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
+    return res.get("messages", [])
+
+
+def _search_api(query: str, max_results: int) -> list[dict]:
+    svc = service()
     return [svc.users().messages().get(userId="me", id=m["id"], format="full").execute()
-            for m in res.get("messages", [])]
+            for m in _list_api(query, max_results)]
+
+
+class _ApiSession:
+    """The OAuth path has no cheap header read, so its header rows carry the
+    whole message under "msg" and fetch() has nothing left to do."""
+
+    def search_ids(self, query: str, max_results: int = 500) -> set[str]:
+        return {m["id"] for m in _list_api(query, max_results)}
+
+    def search_headers(self, query: str, max_results: int = 500) -> list[dict]:
+        return [{"id": m["id"], "headers": headers(m), "msg": m}
+                for m in _search_api(query, max_results)]
+
+    def fetch(self, ids) -> dict:
+        return {}
+
+    def close(self) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -193,10 +284,42 @@ def backend() -> str:
     return "imap" if _app_password() else "oauth"
 
 
+def configured() -> bool:
+    """Whether either backend has credentials to try. Lets a caller tell
+    "Gmail is not set up" (skip quietly) from "Gmail is set up and failed"
+    (say so). A credentials file without a token does not count: the OAuth
+    flow would open a browser and wait, and nobody is there at 05:00."""
+    if _app_password():
+        return True
+    return Path(env("GMAIL_TOKEN_JSON", "./data/gmail_token.json")).exists()
+
+
 def search(query: str, max_results: int = 50):
     """Messages matching a **Gmail** search string, newest first."""
     return (_search_imap(query, max_results) if _app_password()
             else _search_api(query, max_results))
+
+
+@contextmanager
+def session():
+    """One login for all of a run's reads: search_ids(), search_headers() and
+    fetch(). One login per read made four in a few seconds, and on 2026-10-27
+    Gmail refused the second with AUTHENTICATIONFAILED, then accepted the same
+    App Password a minute later.
+
+    search_ids(query) -> ids of the matching messages, nothing downloaded, so
+        a query can ask what only the server knows (which tab a message is in).
+    search_headers(query, max_results) -> [{"id", "headers"}], newest first,
+        without bodies. Downloading whole messages to find the few worth
+        reading is what kept track.py's window small: it read the newest 40 of
+        a week that held 362 (measured 2026-10-27), about 18 hours of mail.
+    fetch(ids) -> {id: whole message}, for the ids worth reading.
+    """
+    s = _ImapSession() if _app_password() else _ApiSession()
+    try:
+        yield s
+    finally:
+        s.close()
 
 
 def _decode(value: str) -> str:

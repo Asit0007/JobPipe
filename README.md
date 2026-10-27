@@ -59,7 +59,7 @@ flowchart TD
     I --> J["<b>notify</b> → Telegram"]
     J --> K((("<b>YOU APPLY</b><br/>on the real posting")))
     K --> L[("<b>applied</b>")]
-    L --> M["<b>track</b><br/>Gmail reply classification"]
+    L --> M["<b>track</b><br/>Gmail replies → Telegram"]
     M --> N[("<b>responded</b>")]
 
     style K fill:#E8A33D,stroke:#8a5d00,stroke-width:3px,color:#1a1a1a
@@ -414,7 +414,9 @@ make daily (05:00 IST, launchd)                          model                  
 │   └── screening.generate_for -> screening answers      TAILOR_CHAIN, first to answer  1 per job
 ├── pdf / tex (tectonic, local)                          none                           0
 ├── notify (Telegram)                                    none                           0
-└── track: classify replies in Gmail                     MODEL_SCORE (flash-lite)       1 per reply
+└── track: replies from employers and recruiters
+    ├── application mail: interview / rejection / ...    MODEL_SCORE (flash-lite)       1 per email, once
+    └── recruiters, job-board messages                    none (rules)                   0
 
 TAILOR_CHAIN (config.py; ranked by the Artificial Analysis Intelligence Index, 2026-09-27)
   gemini-flash-latest (= 3.8 Flash) -> gemini-3.7-flash -> groq:qwen/qwen3.8-27b -> gemini-3.6-flash
@@ -564,8 +566,18 @@ extracted heuristically from prose, so they are worth auditing rather than trust
 
 ## The daily loop
 
-Telegram pings you early afternoon with up to fifteen roles. Each shows the fit score,
+Telegram pings you once a day with up to fifteen roles. Each shows the fit score,
 the deciding reason, your genuine skill gaps, and a link.
+
+When someone writes back, the same run sends one more message: interviews and
+offers first, then recruiters, application updates and rejections. It reads the
+whole last 14 days of mail rather than the newest few, so a reply is not lost to a
+busy inbox or a day the job did not run, and it reports each email once. A
+recruiter writing straight to your inbox counts, not only replies to applications
+you marked here, and so does a recruiter's Naukri mail or Cutshort reply; Naukri's
+job mail collapses into one line of titles. "Thank you for applying" never
+reaches you. `cli track --dry-run` lists what each new email would count as,
+without asking a model or sending anything.
 
 Open `make review`, expand the prepared bullets and screening answers, apply on
 the company's site, click **Mark applied**.
@@ -597,8 +609,8 @@ drives the schedule via supercronic.
 free-tier day at midnight America/Los_Angeles — 12:30 IST in PDT, 13:30 in PST —
 so a breakfast run sits on the *previous* quota day and inherits whatever an
 evening session already spent. On the tailor model, whose free cap is 20 calls a
-day, that is routinely all of it. Reply tracking still runs at 07:00 and 19:00;
-it spends no LLM budget.
+day, that is routinely all of it. Reply tracking also runs at 07:00 and 19:00;
+each email it has already handled is skipped, so the extra runs cost nothing.
 
 **Simplest of all — just run it yourself.** `make daily` on the machine you
 already review from. No infrastructure, the database is a file on your disk, and
@@ -756,7 +768,7 @@ src/jobpipe/
   tailor.py               fact-bounded tailoring + the validation gate
   screening.py            screening answers; human-only questions carved out
   notify.py               Telegram review queue
-  track.py                reply classification + follow-up nudges
+  track.py                replies from employers and recruiters -> Telegram, follow-up nudges
   review_api.py           dashboard; the sole writer of status=applied; /api/models
 
 deploy/                   OCI setup, crontab, cloudflared example

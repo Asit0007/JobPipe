@@ -100,7 +100,7 @@ claims:      ## show what the never_claim gate matches on
 notify:      ## push today's review queue to Telegram
 	$(CLI) notify
 
-track:       ## parse Gmail for replies, update statuses, flag follow-ups
+track:       ## read Gmail for replies, update statuses, Telegram what is new, flag follow-ups
 	$(CLI) track
 
 cooldowns:   ## companies you have applied to, and when each is free again (free)

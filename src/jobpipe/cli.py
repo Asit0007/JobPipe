@@ -641,8 +641,17 @@ def _pdf_all():
 
 
 def cmd_track():
+    """Replies from employers and recruiters. `cli track [--dry-run] [--days N]`
+
+    --dry-run lists what each new message would count as: no model call,
+    nothing sent to Telegram, nothing written. --days widens the window
+    (default TRACK_LOOKBACK_DAYS, 14).
+    """
     from .track import run
-    run()
+    days = None
+    if "--days" in sys.argv:
+        days = int(sys.argv[sys.argv.index("--days") + 1])
+    run(days=days, dry_run="--dry-run" in sys.argv)
 
 
 

@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     notified_at       TEXT,
     applied_at        TEXT,          -- written only by the human 'Mark applied' action
     response_at       TEXT,
-    response_kind     TEXT,          -- rejection | recruiter | interview | offer
+    response_kind     TEXT,          -- rejection | recruiter | interview | offer | update
     followup_due      TEXT,
     notes             TEXT
 );
@@ -51,6 +51,20 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_score  ON jobs(score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_canonical);
+
+-- One row per inbox message track.py has decided about, so a message is
+-- classified and reported once however often its window is re-read.
+-- kind 'noise' (an acknowledgement) is remembered but never sent.
+CREATE TABLE IF NOT EXISTS replies (
+    message_id  TEXT PRIMARY KEY,   -- the Message-ID header
+    received_at TEXT,
+    sender      TEXT NOT NULL,
+    subject     TEXT,
+    kind        TEXT NOT NULL,      -- offer | interview | recruiter | update | rejection | naukri | noise
+    job_id      INTEGER,            -- the application it answers, when one matched
+    seen_at     TEXT NOT NULL,
+    sent_at     TEXT                -- Telegram took it; NULL means still to send
+);
 
 CREATE TABLE IF NOT EXISTS runs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -143,6 +143,46 @@ def update(job_id: int, **fields) -> None:
         c.execute(f"UPDATE jobs SET {sets} WHERE id = ?", (*fields.values(), job_id))
 
 
+def seen_replies(message_ids: list[str]) -> set[str]:
+    """Which of these messages track.py has already decided about."""
+    if not message_ids:
+        return set()
+    with connect() as c:
+        found = set()
+        for i in range(0, len(message_ids), 500):   # SQLite's variable limit
+            chunk = message_ids[i:i + 500]
+            found |= {r[0] for r in c.execute(
+                f"SELECT message_id FROM replies WHERE message_id IN ({','.join('?' * len(chunk))})",
+                chunk)}
+        return found
+
+
+def add_reply(message_id: str, sender: str, subject: str, kind: str,
+              received_at: str | None = None, job_id: int | None = None) -> None:
+    with connect() as c:
+        c.execute(
+            "INSERT OR IGNORE INTO replies (message_id, received_at, sender, subject, "
+            "kind, job_id, seen_at) VALUES (?,?,?,?,?,?,?)",
+            (message_id, received_at, sender, subject, kind, job_id, now()))
+
+
+def unsent_replies() -> list[sqlite3.Row]:
+    """Everything worth telling the user about that Telegram has not taken yet,
+    oldest first. Includes rows a failed send left behind on an earlier run."""
+    with connect() as c:
+        return c.execute(
+            "SELECT r.*, j.company AS job_company, j.title AS job_title "
+            "FROM replies r LEFT JOIN jobs j ON j.id = r.job_id "
+            "WHERE r.kind != 'noise' AND r.sent_at IS NULL "
+            "ORDER BY r.received_at IS NULL, r.received_at").fetchall()
+
+
+def mark_replies_sent(message_ids: list[str]) -> None:
+    with connect() as c:
+        c.executemany("UPDATE replies SET sent_at = ? WHERE message_id = ?",
+                      [(now(), m) for m in message_ids])
+
+
 def log_run(stage: str, ok: bool, detail: str = "") -> None:
     with connect() as c:
         c.execute(
