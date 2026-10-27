@@ -26,14 +26,26 @@ and sends one Telegram message with whatever is new:
                The model reads it and answers interview / offer / recruiter /
                rejection, or noise for an acknowledgement, which is never sent.
   recruiter    a person writing to your Primary tab in recruiter words
-               ("notice period", CTC, interview, your profile ...). Shown to no
-               model, because the Primary tab is also where personal mail is.
+               ("notice period", CTC, interview, your profile ...), or a named
+               person writing in those words from their own mailbox to any
+               other tab (a staffing firm's recruiter landed in Promotions).
+               Shown to no model, because the Primary tab is also where
+               personal mail is.
   portal       a person writing through a job board: a recruiter's Naukri
                mail, a Cutshort reply, a LinkedIn message.
+  invite       a board's own mail saying a company reached out: a foundit
+               invitation to apply, a Shine shortlist or recruiter contact, an
+               employer's Cutshort message you have not answered, Naukri's
+               "recruiters expressed interest". One line per board.
+
+The last two widenings (owner, 2026-10-27: "notify me whenever any company or
+HR reaches out") were measured on 60 days of mail before they were written:
+see _PORTAL_OUTREACH and _person_sender.
 """
 from __future__ import annotations
 
 import hashlib
+import html
 import re
 from collections import Counter, defaultdict
 from contextlib import ExitStack
@@ -80,12 +92,15 @@ _TITLE_STOP = {"the", "and", "for", "with", "your", "our", "job", "role",
                "application", "applying", "position", "opportunity"}
 # ATS senders relay mail on the employer's behalf; their domain is a real signal
 # that this is application mail, but it is never company-identifying on its own.
-# The last four were read off real application mail on 2026-10-27: Workable
-# sends from workablemail.com (not workable.com), Oracle Recruiting Cloud from
-# workflow.mail.<region>.cloud.oracle.com, Avature from avature.<employer>.net.
+# The last six were read off real mail on 2026-10-27: Workable sends from
+# workablemail.com (not workable.com), Oracle Recruiting Cloud from
+# workflow.mail.<region>.cloud.oracle.com, Avature from avature.<employer>.net,
+# SAP SuccessFactors from <employer>@noreply<n>.jobs2web.com, and PeopleStrong
+# (an Indian HR suite) from <employer>'s name at peoplestrong.com.
 ATS_DOMAINS = ("greenhouse.io", "greenhouse-mail.io", "lever.co", "ashbyhq.com",
                "workable.com", "myworkday.com", "smartrecruiters.com", "icims.com",
-               "workablemail.com", "cloud.oracle.com", "avature.", "kula.ai")
+               "workablemail.com", "cloud.oracle.com", "avature.", "kula.ai",
+               "jobs2web.com", "peoplestrong.com")
 # Hosts an apply link can point at that are never the employer: a WWR row's
 # apply_url is a Google search, its url the WWR posting.
 NOT_EMPLOYER_DOMAINS = ("google.com", "weworkremotely.com")
@@ -100,10 +115,17 @@ _SHARED_LOCAL = re.compile(
 # a board is matched against your applications: an alert reading "DevOps
 # Engineer at <company>" names the company and the title, which is two signals,
 # and on the first dry run (2026-10-27) alerts made up most of the matches.
-PORTALS = ("linkedin.com", "naukri.com", "indeed.com", "glassdoor.com",
-           "glassdoor.co.in", "foundit.in", "monsterindia.com", "shine.com",
-           "hirist.tech", "hirist.com", "cutshort.io", "instahyre.com", "adzuna.in",
-           "talent500.co", "wellfound.com", "timesjobs.com", "internshala.com")
+# Domain -> the name a Telegram line uses. foundit is Monster India renamed and
+# still mails from both; hackajob's "<employer> wants you to apply" is its own
+# matching bot writing, not the employer.
+PORTALS = {"linkedin.com": "LinkedIn", "naukri.com": "Naukri", "indeed.com": "Indeed",
+           "glassdoor.com": "Glassdoor", "glassdoor.co.in": "Glassdoor",
+           "foundit.in": "foundit", "monsterindia.com": "foundit", "shine.com": "Shine",
+           "hirist.tech": "hirist", "hirist.com": "hirist", "cutshort.io": "Cutshort",
+           "instahyre.com": "Instahyre", "adzuna.in": "Adzuna", "talent500.co": "Talent500",
+           "wellfound.com": "Wellfound", "timesjobs.com": "TimesJobs",
+           "internshala.com": "Internshala", "hackajob.com": "hackajob",
+           "mail-hackajob.com": "hackajob"}
 # A board's own mailers, as opposed to a recruiter's address on it.
 _BULK_LOCAL = re.compile(
     r"^(?:info|team|support|hello|news|newsletter|updates?|notifications?)$"
@@ -112,6 +134,21 @@ _BULK_LOCAL = re.compile(
 # measured: the inbox it was written against had none in 60 days.
 _LINKEDIN_MESSAGE = re.compile(
     r"\b(?:sent you a (?:new )?message|messaged you|new message|inmail)\b", re.I)
+# A board's own mailer saying a company or recruiter acted on your profile.
+# Measured 2026-10-27 over 60 days: this matched 35 messages, every one of them
+# outreach -- 13 foundit "You're invited to apply for the <role> at <company>"
+# ("we came across your profile"), 10 Cutshort "Missed message from <company>?"
+# (an employer's message left unanswered), 8 Shine (recruiter contact,
+# "You're on our Shortlist for <role>", a consultancy's interview call) and 4
+# Naukri "recruiter(s) expressed interest in your Naukri profile". The boards'
+# adverts did not match: "Recruiters are noticing your profile", "Top Recruiters
+# Are Looking for You!", Cutshort's weekly "<companies> are hiring".
+_PORTAL_OUTREACH = re.compile(
+    r"\binvited to apply\b|\binvites? you to apply\b|\binvitation to apply\b"
+    r"|\bmissed message from\b|\bsent you a (?:new )?message\b|\bmessaged you\b"
+    r"|\bnew message from\b|\binmail\b"
+    r"|\brecruiters? (?:contacted|messaged) you\b|\bexpressed interest in your\b"
+    r"|\b(?:is|are) interested in your profile\b|\bon our shortlist\b|^interview\b", re.I)
 
 # Subjects of mail about an application. The model reads every match and
 # calls an acknowledgement noise, so a wide net costs one call while a narrow
@@ -128,7 +165,7 @@ _BANKING = re.compile(
     r"\b(?:credit|debit) card\b|\bsavings\b|\ba/c\b|\bloan\b|\bkyc\b|\bnet ?banking\b", re.I)
 # An applicant-tracking system also mails its employer's job alerts
 # ("New job opportunities at <employer>", weekly from Oracle Recruiting Cloud).
-_ATS_JOB_ALERT = re.compile(r"^new job opportunities\b|\bjob alert", re.I)
+_ATS_JOB_ALERT = re.compile(r"^new job opportunities\b|^new jobs posted\b|\bjob alert", re.I)
 
 # Measured 2026-10-27 against 60 days of real mail: every recruiter who wrote
 # to the Primary tab used at least one of these (in the subject or the body),
@@ -164,6 +201,8 @@ def _queries(days: int) -> dict[str, str]:
         # Newsletters and adverts: never matched against an application.
         "bulk": f"{window} (category:promotions OR category:social OR category:forums)",
         "recruiter": f"{window} -from:me {_NOT_PRIMARY} ({_RECRUITER_WORDS})",
+        # The same words in any tab; only a named person's mail counts there.
+        "words": f"{window} -from:me ({_RECRUITER_WORDS})",
     }
 
 
@@ -278,12 +317,47 @@ def _portal_person(addr: str, subject: str) -> str | None:
     return None
 
 
-def _sort(h: dict, bulk: set[str], primary_recruiter: set[str], by_token):
-    """(bucket, portal name, application, why) for a message worth a look, else None.
+def _board(addr: str) -> str:
+    domain = addr.lower().partition("@")[2]
+    return next((name for p, name in PORTALS.items()
+                 if domain == p or domain.endswith("." + p)), domain)
 
-    `bulk` holds the ids in the Promotions, Social and Forums tabs, and
-    `primary_recruiter` the Primary-tab ids that used recruiter words; only the
-    server knows a message's tab, so both come from their own searches."""
+
+def _portal_invite(addr: str, subject: str) -> str | None:
+    """The board's name when its own mail says a company reached out (see
+    _PORTAL_OUTREACH), else None."""
+    if _PORTAL_OUTREACH.search(html.unescape(subject or "")):
+        return _board(addr)
+    return None
+
+
+def _person_sender(sender: str) -> bool:
+    """A named person's own mailbox rather than a company's mailer: a display
+    name of two or more words, one of them in the address's local part and
+    none in its domain. "Jane Doe <jane.doe@agency.example>" is a person;
+    "Dbco <dbco@team.dbco.example>" (one word), "Acme Bank <acme_bank@
+    acme.example>" (named in its domain) and "Sam from Jobtool
+    <hello@jobtool.example>" (a mailer's address) are not.
+    Measured 2026-10-27 outside the Primary tab over 60 days: with the
+    recruiter words, this kept a staffing firm's recruiter whose mail Gmail had
+    filed in Promotions, and nothing else."""
+    name, addr = parseaddr(sender)
+    local, _, domain = addr.lower().partition("@")
+    words = re.findall(r"[a-z]+", name.lower())
+    if len(words) < 2 or not local or _BULK_LOCAL.search(local):
+        return False
+    named = [w for w in words if len(w) >= 3]
+    return any(w in local for w in named) and not any(w in domain for w in named)
+
+
+def _sort(h: dict, bulk: set[str], primary_recruiter: set[str], by_token,
+          words: set[str] = frozenset()):
+    """(bucket, board name, application, why) for a message worth a look, else None.
+
+    `bulk` holds the ids in the Promotions, Social and Forums tabs,
+    `primary_recruiter` the Primary-tab ids that used recruiter words, and
+    `words` the ids in any tab that used them; only the server knows a
+    message's tab, so all three come from their own searches."""
     hd = h["headers"]
     sender, subject = hd.get("from", ""), hd.get("subject", "")
     addr = parseaddr(sender)[1].lower()
@@ -291,7 +365,10 @@ def _sort(h: dict, bulk: set[str], primary_recruiter: set[str], by_token):
 
     if _is_portal(domain):
         portal = _portal_person(addr, subject)
-        return ("portal", portal, None, []) if portal else None
+        if portal:
+            return "portal", portal, None, []
+        board = _portal_invite(addr, subject)
+        return ("invite", board, None, []) if board else None
     # Banks write about "your application" too -- for an account, a card, a
     # loan. Judged by the subject, not the sender: a bank is also an employer.
     if _BANKING.search(subject):
@@ -301,12 +378,13 @@ def _sort(h: dict, bulk: set[str], primary_recruiter: set[str], by_token):
             return None
         _, job, why = _match(sender, subject, by_token)
         return "application", None, job, why
+    named = h["id"] in words and _person_sender(sender)
     if h["id"] in bulk:
-        return None
+        return ("recruiter", None, None, []) if named else None
     matched, job, why = _match(sender, subject, by_token)
     if matched or _APPLICATION_SUBJECT.search(subject):
         return "application", None, job, why
-    if h["id"] in primary_recruiter:
+    if h["id"] in primary_recruiter or named:
         return "recruiter", None, None, []
     return None
 
@@ -372,6 +450,19 @@ def _naukri_title(subject: str) -> str:
     return re.sub(r"^job\s*\|\s*", "", s, flags=re.I)[:70]
 
 
+_INVITE_PREFIX = re.compile(
+    r"^(?:(?:re|fwd?)\s*:\s*|congratulations!?\s*|you(?:'|’)re invited to apply for (?:the )?)",
+    re.I)
+
+
+def _invite_title(subject: str) -> str:
+    """"You're invited to apply for the SRE role at Acme" -> "SRE role at Acme"."""
+    s, prev = html.unescape(subject or "").strip(), None
+    while s != prev:
+        prev, s = s, _INVITE_PREFIX.sub("", s).strip()
+    return s[:80]
+
+
 def _block(row) -> str:
     meta = [parseaddr(row["sender"] or "")[1], _when(row)]
     if row["job_id"]:
@@ -389,7 +480,14 @@ def messages(rows) -> list[str]:
     at once, so those share one line of titles instead of a block each."""
     rows = list(rows)
     naukri = [r for r in rows if r["kind"] == "naukri"]
-    rest = sorted((r for r in rows if r["kind"] != "naukri"),
+    invites: dict[str, list[str]] = defaultdict(list)
+    for r in rows:
+        if r["kind"] == "invite":
+            title = _invite_title(r["subject"])
+            board = invites[_board(parseaddr(r["sender"] or "")[1])]
+            if title not in board:          # Cutshort repeats its reminders
+                board.append(title)
+    rest = sorted((r for r in rows if r["kind"] not in ("naukri", "invite")),
                   key=lambda r: _ORDER.get(r["kind"], 9))
     n = len(rows)
     blocks = [f"*📬 {n} new from recruiters and employers*"]
@@ -399,6 +497,12 @@ def messages(rows) -> list[str]:
         more = f" (+{len(naukri) - 8} more)" if len(naukri) > 8 else ""
         blocks.append(f"*Naukri recruiter mails ({len(naukri)}):* "
                       f"{notify._md(titles)}{more}")
+    # A board's notice that a company reached out: the company and role are
+    # the subject, so one line per board says it all.
+    for board, titles in sorted(invites.items(), key=lambda kv: -len(kv[1])):
+        more = f" (+{len(titles) - 8} more)" if len(titles) > 8 else ""
+        blocks.append(f"*{notify._md(board)} - companies reaching out ({len(titles)}):* "
+                      f"{notify._md('; '.join(titles[:8]))}{more}")
     out, cur = [], ""
     for b in blocks:
         if cur and len(cur) + 2 + len(b) > TELEGRAM_LIMIT:
@@ -434,7 +538,7 @@ def _gmail_failed(e: Exception, days: int, log) -> NoReturn:
     """A check that could not run must not look like a quiet inbox -- this
     project's most repeated bug (CLAUDE.md 7, "produced nothing, reported
     success"). Say so on Telegram, record it, and fail the stage."""
-    why = f"{type(e).__name__}: {e}"[:300]
+    why = f"{type(e).__name__}: {e}"[:600]
     log(f"gmail unavailable: {why}")
     db.log_run("track", False, f"gmail unavailable: {why}")
     notify._send(
@@ -462,6 +566,7 @@ def run(log=print, *, days: int | None = None, dry_run: bool = False) -> None:
             heads = [_unfold(h) for h in g.search_headers(q["all"], max_results=cap)]
             bulk = g.search_ids(q["bulk"], max_results=cap)
             recruiter = g.search_ids(q["recruiter"], max_results=cap)
+            words = g.search_ids(q["words"], max_results=cap)
         except Exception as e:
             _gmail_failed(e, days, log)
         log(f"read {len(heads)} message headers from the last {days} days"
@@ -474,7 +579,7 @@ def run(log=print, *, days: int | None = None, dry_run: bool = False) -> None:
             mid = _message_id(h)
             if mid in seen:
                 continue
-            found = _sort(h, bulk, recruiter, by_token)
+            found = _sort(h, bulk, recruiter, by_token, words)
             if found:
                 picked.append((mid, h, *found))
 
@@ -504,6 +609,8 @@ def run(log=print, *, days: int | None = None, dry_run: bool = False) -> None:
         if bucket == "application":
             msg = h.get("msg") or bodies.get(h["id"])
             kind = _classify(sender, subject, msg) if msg is not None else "update"
+        elif bucket == "invite":
+            kind = "invite"
         else:
             kind = "naukri" if portal == "naukri" else "recruiter"
         db.add_reply(mid, sender, subject, kind, received_at=_received(hd),

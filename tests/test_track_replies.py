@@ -6,6 +6,7 @@ left three employers' status updates unrecorded, and recruiters writing
 without an application behind them were never looked for. None of it was ever
 sent anywhere: the stage only wrote a status column.
 """
+import imaplib
 from contextlib import contextmanager
 from email.message import EmailMessage
 
@@ -60,9 +61,11 @@ def _mail(subject, sender, body):
 class FakeGmail:
     """gmail.session() over a fixed mailbox; counts logins."""
 
-    def __init__(self, monkeypatch, heads, bulk=(), primary_recruiter=(), bodies=None):
+    def __init__(self, monkeypatch, heads, bulk=(), primary_recruiter=(), bodies=None,
+                 words=()):
         self.heads, self.fetched, self.logins = heads, [], 0
         self.bulk, self.recruiter = set(bulk), set(primary_recruiter)
+        self.words = set(words) | self.recruiter
         self.bodies = bodies or {}
         monkeypatch.setattr(gmail, "configured", lambda: True)
         monkeypatch.setattr(gmail, "session", self.session)
@@ -77,7 +80,9 @@ class FakeGmail:
         return list(self.heads)
 
     def search_ids(self, query, max_results=500):
-        return self.bulk if "category:promotions OR" in query else self.recruiter
+        if "category:promotions OR" in query:
+            return self.bulk
+        return self.recruiter if "-category:updates" in query else self.words
 
     def fetch(self, ids):
         self.fetched += list(ids)
@@ -118,11 +123,12 @@ def test_a_person_writing_through_a_job_board_is_told_apart_from_its_alerts(addr
     assert track._portal_person(addr, subject) == expected
 
 
-def _sorted(sender, subject, *, applied=True, bulk=False, primary_recruiter=False):
+def _sorted(sender, subject, *, applied=True, bulk=False, primary_recruiter=False,
+            words=False):
     by_token = track._index(db.fetch(status="applied")) if applied else {}
     h = _head(1, sender, subject)
     return track._sort(h, {"1"} if bulk else set(), {"1"} if primary_recruiter else set(),
-                       by_token)
+                       by_token, {"1"} if words or primary_recruiter else set())
 
 
 def test_a_job_alert_naming_a_company_you_applied_to_is_not_a_reply():
@@ -365,3 +371,172 @@ def test_headers_are_read_in_batches_and_returned_newest_first(monkeypatch):
     assert [r["id"] for r in rows[:2]] == ["450", "449"]
     assert rows[-1]["id"] == "51"
     assert rows[0]["headers"]["message-id"] == "<450>"
+
+
+# --------------------------------------------------------------------------
+# companies reaching out (owner, 2026-10-27: "notify me whenever any company
+# or HR reaches out"). Subjects are the shapes measured over 60 days of real
+# mail that day, with placeholder names.
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("addr,subject,expected", [
+    ("opportunities@foundit.in",
+     "You're invited to apply for the Linux Cloud Engineer role at Acme Infotech Private Limited",
+     "foundit"),
+    ("opportunities@foundit.in",
+     "You're invited to apply for the &quot;Azure L2 Support Engineer&quot; role at Globex",
+     "foundit"),
+    ("voila@alerts.cutshort.io", "Re: Missed message from Globex?", "Cutshort"),
+    ("recruiters@jobs.shine.com",
+     "Congratulations! You\u2019re on our Shortlist for Technical Support", "Shine"),
+    ("alerts@jobs.shine.com", "2 Recruiters contacted you through Shine.com", "Shine"),
+    ("alerts@jobs.shine.com", "Interview Call: Profile Details Required", "Shine"),
+    ("info@naukri.com", "7 recruiter(s) expressed interest in your Naukri profile", "Naukri"),
+    # the boards' adverts and digests
+    ("info@naukri.com", "Asit, Recruiters are noticing your profile \U0001f680", None),
+    ("alerts@alerts.shine.com", "Top Recruiters Are Looking for You!", None),
+    ("notify@cutshort.io", "Acme, Globex and 1 more company are hiring in your expertise area", None),
+    ("voila@alerts.cutshort.io", "You have a questionnaire pending", None),
+    ("archer@mail-hackajob.com", "Acme and 3 others want you to apply", None),
+    ("jobalerts-noreply@linkedin.com", "Acme is hiring a Cloud Engineer", None),
+])
+def test_a_board_saying_a_company_reached_out_is_an_invite(addr, subject, expected):
+    found = _sorted(addr, subject, applied=False)
+    if expected is None:
+        assert found is None
+    else:
+        assert found[:2] == ("invite", expected)
+
+
+@pytest.mark.parametrize("sender,expected", [
+    ("Jane Doe <jane.doe@staffing.example>", True),
+    ("A B Priya <priya.ab@agency.example>", True),
+    ("Acme Bank <acmebank@acme.example>", False),          # a brand, named in its domain
+    ("Stream On Demand <ondemand@email.stream.example>", False),
+    ("Sam from Jobtool <hello@jobtool.example>", False),  # a person's name on a mailer
+    ("Dbco <dbco@team.dbco.example>", False),               # one word is a brand
+    ("Jane Doe <newsletter@jane.example>", False),
+    ("jane.doe@staffing.example", False),                   # no display name
+])
+def test_a_named_persons_own_mailbox_is_told_from_a_mailer(sender, expected):
+    assert track._person_sender(sender) is expected
+
+
+def test_a_recruiter_filed_under_promotions_is_still_a_recruiter():
+    """A staffing firm's recruiter landed in Promotions on 2026-10-06 and the
+    Primary-only rule never saw it."""
+    assert _sorted("Jane Doe <jane.doe@staffing.example>",
+                   "Urgent Hiring - Cloud Engineer | Virtual Interview",
+                   applied=False, bulk=True, words=True)[0] == "recruiter"
+    assert _sorted("Jane Doe <jane.doe@staffing.example>", "Cloud roles this week",
+                   applied=False, words=True)[0] == "recruiter"      # the Updates tab
+
+
+def test_a_mailer_using_recruiter_words_outside_primary_is_skipped():
+    assert _sorted("Jobtool <hello@jobtool.example>", "Get shortlisted for interviews faster",
+                   applied=False, bulk=True, words=True) is None
+    assert _sorted("Jane Doe <jane.doe@staffing.example>", "Weekend plans",
+                   applied=False, bulk=True) is None                  # no recruiter words
+
+
+def test_an_ats_weekly_job_alert_is_not_a_reply():
+    assert _sorted("acmetecp3-jobnotification@noreply12.jobs2web.com",
+                   "New jobs posted from Acme Group", applied=False) is None
+    assert _sorted("acme@noreply12.jobs2web.com", "Your application for Cloud Engineer",
+                   applied=False)[0] == "application"
+
+
+def test_companies_reaching_out_through_a_board_reach_telegram_once(monkeypatch, telegram, model):
+    heads = [
+        _head(1, "Foundit <opportunities@foundit.in>",
+              "You're invited to apply for the Linux Cloud Engineer role at Acme Infotech"),
+        _head(2, "Voila <voila@alerts.cutshort.io>", "Missed message from Globex?"),
+        _head(3, "Voila <voila@alerts.cutshort.io>", "Re: Missed message from Globex?"),
+        _head(4, "Naukri <info@naukri.com>", "7 recruiter(s) expressed interest in your Naukri profile"),
+        _head(5, "Naukri <info@naukri.com>", "Asit, Recruiters are noticing your profile"),
+        _head(6, "Jane Doe <jane.doe@staffing.example>", "Urgent Hiring - SRE | Bangalore"),
+    ]
+    box = FakeGmail(monkeypatch, heads, bulk={"6"}, words={"6"})
+    track.run(log=lambda *a: None)
+
+    assert len(telegram) == 1
+    text = telegram[0]
+    assert "*foundit - companies reaching out (1):* Linux Cloud Engineer role at Acme Infotech" in text
+    # Cutshort reminds twice about one message: one entry, "Re:" dropped
+    assert "*Cutshort - companies reaching out (1):* Missed message from Globex?" in text
+    assert "*Naukri - companies reaching out (1):*" in text and "noticing" not in text
+    assert "*Recruiter* - Jane Doe" in text
+    assert box.fetched == [] and model.calls == []     # nothing read in full, no model
+    with db.connect() as c:
+        kinds = sorted(r[0] for r in c.execute("SELECT kind FROM replies"))
+    assert kinds == ["invite"] * 4 + ["recruiter"]
+
+    track.run(log=lambda *a: None)
+    assert len(telegram) == 1, "the same mail was reported twice"
+
+
+# --------------------------------------------------------------------------
+# logging in: a refusal is retried once before anyone is told to act
+# --------------------------------------------------------------------------
+class FakeLogin:
+    """imaplib.IMAP4_SSL whose login() answers from a script."""
+    answers: list = []
+    made: list = []
+
+    def __init__(self, *a, **kw):
+        FakeLogin.made.append(self)
+
+    def login(self, user, password):
+        answer = FakeLogin.answers.pop(0)
+        if answer != "OK":
+            raise imaplib.IMAP4.error(answer)
+
+    def shutdown(self):
+        pass
+
+
+@pytest.fixture
+def imap_login(monkeypatch):
+    monkeypatch.setattr(gmail, "_app_password", lambda: ("a@gmail.example", "pw"))
+    monkeypatch.setattr(gmail.imaplib, "IMAP4_SSL", FakeLogin)
+    slept = []
+    monkeypatch.setattr(gmail.time, "sleep", slept.append)
+    FakeLogin.made = []
+    return slept
+
+
+REFUSED = "b'[AUTHENTICATIONFAILED] Invalid credentials (Failure)'"
+
+
+def test_a_refused_login_is_tried_again_after_a_pause(imap_login):
+    FakeLogin.answers = [REFUSED, "OK"]
+    conn = gmail.connect()
+    assert conn is FakeLogin.made[-1] and len(FakeLogin.made) == 2
+    assert imap_login == [gmail.LOGIN_RETRY_SECONDS]
+
+
+def test_two_refusals_say_the_app_password_may_be_revoked(imap_login):
+    FakeLogin.answers = [REFUSED, REFUSED]
+    with pytest.raises(gmail.GmailAuthError, match="twice") as e:
+        gmail.connect()
+    assert "apppasswords" in str(e.value) and "revoke" in str(e.value)
+
+
+def test_a_login_error_that_is_not_a_refusal_is_not_retried(imap_login):
+    FakeLogin.answers = ["[UNAVAILABLE] Temporary System Problem"]
+    with pytest.raises(gmail.GmailAuthError):
+        gmail.connect()
+    assert imap_login == [] and len(FakeLogin.made) == 1
+
+
+def test_a_dropped_connection_is_read_again_on_a_fresh_login(monkeypatch):
+    """A 60-day header read lost its socket mid-FETCH on 2026-10-27."""
+    class Dropping(FakeIMAP):
+        def uid(self, command, *args):
+            raise imaplib.IMAP4.abort("command: UID => socket error: EOF")
+
+    conns = [Dropping([b"1"]), FakeIMAP([b"1", b"2"])]
+    monkeypatch.setattr(gmail, "_app_password", lambda: ("a@gmail.example", "pw"))
+    monkeypatch.setattr(gmail, "connect", lambda: conns.pop(0))
+    with gmail.session() as g:
+        assert g.search_ids("newer_than:14d") == {"1", "2"}
+    assert conns == []

@@ -44,6 +44,7 @@ from __future__ import annotations
 import email
 import imaplib
 import re
+import time
 from contextlib import contextmanager
 from email.header import decode_header, make_header
 from email.message import Message
@@ -66,6 +67,12 @@ IMAP_FOLDER = env("GMAIL_IMAP_FOLDER", "[Gmail]/All Mail")
 # launchd will not start a job that is still running -- so every later day's run
 # was skipped without a log line. A timeout fails the source; ingest moves on.
 IMAP_TIMEOUT = float(env("GMAIL_IMAP_TIMEOUT", "60") or 60)
+# Seconds to wait before trying a refused login once more. On 2026-10-27 Gmail
+# answered AUTHENTICATIONFAILED to the second of four logins made within
+# seconds, then took the same App Password a minute later -- and the error text
+# told the owner to make a new one. One retry tells a refusal like that from a
+# password that is really wrong, before anyone is told to replace it.
+LOGIN_RETRY_SECONDS = float(env("GMAIL_LOGIN_RETRY_SECONDS", "60") or 60)
 
 
 class GmailAuthError(RuntimeError):
@@ -93,18 +100,30 @@ def connect() -> imaplib.IMAP4_SSL:
             "must be on first), then put both in .env."
         )
     address, password = creds
-    conn = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, timeout=IMAP_TIMEOUT)
-    try:
-        conn.login(address, password)
-    except imaplib.IMAP4.error as e:
-        detail = str(e)
-        hint = ""
-        if "AUTHENTICATIONFAILED" in detail.upper():
-            hint = (" -- an ordinary account password will not work here; it has "
-                    "to be a 16-character App Password, and 2-Step Verification "
-                    "must be enabled on the account.")
-        raise GmailAuthError(f"Gmail IMAP login failed for {address}: {detail}{hint}") from e
-    return conn
+    for attempt in (1, 2):
+        conn = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, timeout=IMAP_TIMEOUT)
+        try:
+            conn.login(address, password)
+            return conn
+        except imaplib.IMAP4.error as e:
+            detail = str(e)
+            try:
+                conn.shutdown()
+            except Exception:
+                pass
+            if "AUTHENTICATIONFAILED" not in detail.upper():
+                raise GmailAuthError(f"Gmail IMAP login failed for {address}: {detail}") from e
+            if attempt == 1:
+                time.sleep(LOGIN_RETRY_SECONDS)
+                continue
+            raise GmailAuthError(
+                f"Gmail refused the App Password for {address} twice, "
+                f"{LOGIN_RETRY_SECONDS:.0f} s apart ({detail}). If it worked before, "
+                "Google has probably revoked it (changing the account password revokes "
+                "every App Password): make a new one at myaccount.google.com/apppasswords "
+                "and put it in .env as GMAIL_APP_PASSWORD. On a first setup it has to be "
+                "a 16-character App Password, not the account password, with 2-Step "
+                "Verification on.") from e
 
 
 def _quote(query: str) -> str:
@@ -197,19 +216,32 @@ class _ImapSession:
     def __init__(self):
         self.conn = _open()
 
+    def _again(self, read):
+        """read(conn), and once more on a fresh login if Gmail drops the
+        connection part-way. On 2026-10-27 a 60-day header read lost its socket
+        (EOF) in the middle of a FETCH, and the same read worked 20 s later."""
+        try:
+            return read(self.conn)
+        except (imaplib.IMAP4.abort, OSError):
+            _close(self.conn)
+            self.conn = _open()
+            return read(self.conn)
+
     def search_ids(self, query: str, max_results: int = 500) -> set[str]:
-        return {u.decode() for u in _uids(self.conn, query)}
+        return self._again(lambda c: {u.decode() for u in _uids(c, query)})
 
     def search_headers(self, query: str, max_results: int = 500) -> list[dict]:
-        return _headers_imap(self.conn, query, max_results)
+        return self._again(lambda c: _headers_imap(c, query, max_results))
 
     def fetch(self, ids) -> dict[str, Message]:
-        out: dict[str, Message] = {}
-        for i in ids:
-            msg = _fetch_one(self.conn, i.encode())
-            if msg is not None:
-                out[i] = msg
-        return out
+        def read(conn):
+            out: dict[str, Message] = {}
+            for i in ids:
+                msg = _fetch_one(conn, i.encode())
+                if msg is not None:
+                    out[i] = msg
+            return out
+        return self._again(read)
 
     def close(self) -> None:
         _close(self.conn)

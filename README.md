@@ -416,7 +416,7 @@ make daily (05:00 IST, launchd)                          model                  
 ├── notify (Telegram)                                    none                           0
 └── track: replies from employers and recruiters
     ├── application mail: interview / rejection / ...    MODEL_SCORE (flash-lite)       1 per email, once
-    └── recruiters, job-board messages                    none (rules)                   0
+    └── recruiters, job-board messages and invitations    none (rules)                   0
 
 TAILOR_CHAIN (config.py; ranked by the Artificial Analysis Intelligence Index, 2026-09-27)
   gemini-flash-latest (= 3.8 Flash) -> gemini-3.7-flash -> groq:qwen/qwen3.8-27b -> gemini-3.6-flash
@@ -575,8 +575,11 @@ whole last 14 days of mail rather than the newest few, so a reply is not lost to
 busy inbox or a day the job did not run, and it reports each email once. A
 recruiter writing straight to your inbox counts, not only replies to applications
 you marked here, and so does a recruiter's Naukri mail or Cutshort reply; Naukri's
-job mail collapses into one line of titles. "Thank you for applying" never
-reaches you. `cli track --dry-run` lists what each new email would count as,
+job mail collapses into one line of titles. So does a company reaching out through
+a board (a foundit invitation to apply, a Shine shortlist, an employer's Cutshort
+message, Naukri's "recruiters expressed interest"), one line per board, and a
+named recruiter whose mail Gmail filed under Promotions. "Thank you for applying"
+never reaches you. `cli track --dry-run` lists what each new email would count as,
 without asking a model or sending anything.
 
 Open `make review`, expand the prepared bullets and screening answers, apply on

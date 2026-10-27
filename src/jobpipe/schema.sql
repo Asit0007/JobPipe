@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS replies (
     received_at TEXT,
     sender      TEXT NOT NULL,
     subject     TEXT,
-    kind        TEXT NOT NULL,      -- offer | interview | recruiter | update | rejection | naukri | noise
+    kind        TEXT NOT NULL,      -- offer | interview | recruiter | update | rejection | naukri | invite | noise
     job_id      INTEGER,            -- the application it answers, when one matched
     seen_at     TEXT NOT NULL,
     sent_at     TEXT                -- Telegram took it; NULL means still to send
