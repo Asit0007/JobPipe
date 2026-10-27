@@ -404,7 +404,7 @@ readme-stats`. Two things it does that running the stages by hand does not:
 #### Where every model call goes
 
 ```
-make daily (12:35 IST, launchd)                          model                          calls
+make daily (05:00 IST, launchd)                          model                          calls
 ├── ingest
 │   ├── ATS / job-board APIs (greenhouse, lever, ...)    none                           0
 │   └── gmail_alerts: one parse per alert email          MODEL_SCORE (flash-lite)       ~1 per email
@@ -657,9 +657,10 @@ app to a Privacy pane *launches* it, and while it still defaulted to `daily` tha
 fired a full unattended pipeline run. The LaunchAgent passes `daily`; nothing
 else can imply it.
 
-**Pick the hour the same way the OCI crontab does.** 12:35 sits five minutes past
-the quota roll while the US is on PDT and fifty-five minutes *short* of it on
-PST; 14:00 is past the boundary in both halves of the year.
+**The hour is a trade.** The quota roll is 12:30 IST on PDT and 13:30 IST on PST,
+so the OCI crontab's 14:00 always starts on a full Gemini quota. The Mac runs at
+05:00 IST (owner, 2026-10-27), on the previous quota day, and leans on the
+Groq/Ollama fallback in `TAILOR_CHAIN` when Gemini is already spent.
 
 **GitHub Actions is a manual escape hatch, not a scheduler.**
 `.github/workflows/pipeline.yml` is `workflow_dispatch` only, deliberately:

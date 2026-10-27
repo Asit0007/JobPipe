@@ -62,7 +62,7 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 
-# launchd replays a missed 12:35 at the next wake, and that wake can be a
+# launchd replays a missed 05:00 at the next wake, and that wake can be a
 # 10-second maintenance DarkWake with no network (the screener's copy of this
 # wrapper lost 2026-09-23 and 2026-09-29 that way). Only `daily` needs the
 # network; `status` stays a free offline smoke test. The limit counts ATTEMPTS,

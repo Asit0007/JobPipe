@@ -13,7 +13,7 @@
   To remove:
       launchctl bootout gui/$(id -u)/com.asitminz.jobpipe.daily
 
-  WHY launchd AND NOT cron, on a laptop: cron fires at 12:35 or not at all. If
+  WHY launchd AND NOT cron, on a laptop: cron fires at 05:00 or not at all. If
   the lid is shut the run is simply lost, and nothing says so. launchd runs a
   missed StartCalendarInterval job on the next wake instead, which is the whole
   difference between a schedule and a schedule that happens.
@@ -25,15 +25,13 @@
   the symptom is runs = 0, which looks exactly like a job that was never
   installed. Check `runs` and data/logs/daily-<date>.log, never `state`.
 
-  THE TIME IS 12:35 AND IT IS LOAD-BEARING - see deploy/crontab, which says
-  this at length. Google rolls the free-tier quota day at midnight
-  America/Los_Angeles: 12:30 IST while the US is on PDT, 13:30 IST on PST.
-  12:35 sits five minutes past the boundary in summer. From the PST switch in
-  early November it sits fifty-five minutes SHORT of it, and the run will start
-  on the previous quota day - on gemini-flash-latest, cap 20 calls, that is
-  routinely a quota an evening session already spent. Move Minute/Hour to 13:35
-  then, or add a second dict to StartCalendarInterval and let the wrapper's
-  quota-day line in the log tell you which firing did the work.
+  THE TIME IS 05:00 IST (owner, 2026-10-27), moved from 12:35. Google rolls the
+  free-tier quota day at midnight America/Los_Angeles: 12:30 IST on PDT, 13:30
+  IST on PST. 05:00 is always on the PREVIOUS quota day, so Gemini starts with
+  whatever an evening session already spent (gemini-flash-latest caps at 20
+  calls). The owner chose the morning anyway: TAILOR_CHAIN falls through to
+  Groq and Ollama Cloud when Gemini is spent, and the queue is ready for the
+  day. The wrapper's quota-day line in the log shows which day a run used.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -65,9 +63,9 @@
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>12</integer>
+        <integer>5</integer>
         <key>Minute</key>
-        <integer>35</integer>
+        <integer>0</integer>
     </dict>
 
     <!-- Homebrew is not on launchd's PATH and tectonic lives there; without
