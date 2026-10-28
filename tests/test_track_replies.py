@@ -391,6 +391,8 @@ def test_headers_are_read_in_batches_and_returned_newest_first(monkeypatch):
     ("alerts@jobs.shine.com", "2 Recruiters contacted you through Shine.com", "Shine"),
     ("alerts@jobs.shine.com", "Interview Call: Profile Details Required", "Shine"),
     ("info@naukri.com", "7 recruiter(s) expressed interest in your Naukri profile", "Naukri"),
+    ("alerts@jobs.shine.com", "Urgent Opening - Verify Profile Details", "Shine"),
+    ("alerts@jobs.shine.com", "You are a Top Applicant! Verify Details", "Shine"),
     # the boards' adverts and digests
     ("info@naukri.com", "Asit, Recruiters are noticing your profile \U0001f680", None),
     ("alerts@alerts.shine.com", "Top Recruiters Are Looking for You!", None),
@@ -540,3 +542,26 @@ def test_a_dropped_connection_is_read_again_on_a_fresh_login(monkeypatch):
     with gmail.session() as g:
         assert g.search_ids("newer_than:14d") == {"1", "2"}
     assert conns == []
+
+
+# Shine relays a recruiter's message as "<Company> - Client of Shine.com" with
+# only the role as the subject (measured 2026-10-28: 16 in 60 days, all skipped).
+SHINE_CLIENT = "Globex Staffing Pvt Ltd - Client of Shine.com <recruiters@alerts.shine.com>"
+
+
+def test_a_shine_client_mail_is_an_invite_whatever_its_subject():
+    assert _sorted(SHINE_CLIENT, "Urgent | Cloud & Server Support Engineer",
+                   applied=False)[:2] == ("invite", "Shine")
+    # the same subject from Shine's own job-alert mailer is not outreach
+    assert _sorted("Shine Recruiter <jobs@jobsalert.shine.com>",
+                   "Urgent | Cloud & Server Support Engineer", applied=False) is None
+
+
+def test_a_shine_client_line_names_the_company_and_folds_the_repeat():
+    """Shine sends each of these twice; the line shows it once, with the
+    company the subject leaves out."""
+    rows = [_row(i, "invite", "Urgent | Cloud & Server Support Engineer", SHINE_CLIENT)
+            for i in (1, 2)]
+    text = track.messages(rows)[0]
+    assert "Shine - companies reaching out (1)" in text
+    assert "Globex Staffing Pvt Ltd" in text

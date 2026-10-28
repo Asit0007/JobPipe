@@ -148,7 +148,15 @@ _PORTAL_OUTREACH = re.compile(
     r"|\bmissed message from\b|\bsent you a (?:new )?message\b|\bmessaged you\b"
     r"|\bnew message from\b|\binmail\b"
     r"|\brecruiters? (?:contacted|messaged) you\b|\bexpressed interest in your\b"
-    r"|\b(?:is|are) interested in your profile\b|\bon our shortlist\b|^interview\b", re.I)
+    r"|\b(?:is|are) interested in your profile\b|\bon our shortlist\b|^interview\b"
+    r"|\bverify (?:profile )?details\b", re.I)
+# Shine relays a recruiter's message under the employer's name, "<Company> -
+# Client of Shine.com", with only the role as the subject; the body opens "A
+# recruiter has reached out to you". Measured 2026-10-28 over 60 days: 16 of
+# these and 3 consultancy mails ending "Verify (Profile) Details" (a shortlist
+# asking for an updated CV), all outreach, and neither pattern matched any
+# other mail. Before this, 18 of the 19 were skipped.
+_PORTAL_CLIENT = re.compile(r"^(.+?)\s+-\s+client of shine(?:\.com)?\b", re.I)
 
 # Subjects of mail about an application. The model reads every match and
 # calls an acknowledgement noise, so a wide net costs one call while a narrow
@@ -323,10 +331,10 @@ def _board(addr: str) -> str:
                  if domain == p or domain.endswith("." + p)), domain)
 
 
-def _portal_invite(addr: str, subject: str) -> str | None:
+def _portal_invite(addr: str, subject: str, name: str = "") -> str | None:
     """The board's name when its own mail says a company reached out (see
-    _PORTAL_OUTREACH), else None."""
-    if _PORTAL_OUTREACH.search(html.unescape(subject or "")):
+    _PORTAL_OUTREACH and _PORTAL_CLIENT), else None."""
+    if _PORTAL_OUTREACH.search(html.unescape(subject or "")) or _PORTAL_CLIENT.search(name):
         return _board(addr)
     return None
 
@@ -367,7 +375,7 @@ def _sort(h: dict, bulk: set[str], primary_recruiter: set[str], by_token,
         portal = _portal_person(addr, subject)
         if portal:
             return "portal", portal, None, []
-        board = _portal_invite(addr, subject)
+        board = _portal_invite(addr, subject, parseaddr(sender)[0])
         return ("invite", board, None, []) if board else None
     # Banks write about "your application" too -- for an account, a card, a
     # loan. Judged by the subject, not the sender: a bank is also an employer.
@@ -455,12 +463,17 @@ _INVITE_PREFIX = re.compile(
     re.I)
 
 
-def _invite_title(subject: str) -> str:
-    """"You're invited to apply for the SRE role at Acme" -> "SRE role at Acme"."""
+def _invite_title(subject: str, sender: str = "") -> str:
+    """"You're invited to apply for the SRE role at Acme" -> "SRE role at Acme".
+    A Shine client mail's subject is only the role, so its company is added
+    from the sender's name."""
     s, prev = html.unescape(subject or "").strip(), None
     while s != prev:
         prev, s = s, _INVITE_PREFIX.sub("", s).strip()
-    return s[:80]
+    client = _PORTAL_CLIENT.search(parseaddr(sender or "")[0])
+    if client:
+        s = f"{s[:60]} ({client.group(1).strip()[:40]})"
+    return s[:100] if client else s[:80]
 
 
 def _block(row) -> str:
@@ -483,7 +496,7 @@ def messages(rows) -> list[str]:
     invites: dict[str, list[str]] = defaultdict(list)
     for r in rows:
         if r["kind"] == "invite":
-            title = _invite_title(r["subject"])
+            title = _invite_title(r["subject"], r["sender"])
             board = invites[_board(parseaddr(r["sender"] or "")[1])]
             if title not in board:          # Cutshort repeats its reminders
                 board.append(title)
