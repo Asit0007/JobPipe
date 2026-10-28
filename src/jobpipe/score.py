@@ -188,6 +188,18 @@ def prefilter(job) -> tuple[bool, int, str]:
     if _is_alert_without_jd(job):
         return True, hits, f"alert row, no JD -- keyword gate skipped ({hits} hit(s))"
 
+    # Adzuna cuts every description at ~500 characters (7.15) and jdfetch cannot
+    # fetch the rest (7.27), so a JD there rarely has room for a second keyword.
+    # Measured 2026-10-28 over 21 days: 136 Adzuna rows died on exactly one hit
+    # while their TITLE named it -- "Azure DevOps Engineer", "Azure Cloud
+    # Engineer", "Linux Administrator" -- about 6.5 rows a day, from the source
+    # that carries 96% of the India inventory. A must-have term in an Adzuna
+    # title is therefore enough on its own. Other sources keep the full count:
+    # their descriptions are whole, so one hit there means one hit.
+    if (hits == 1 and _column(job, "source") == "adzuna"
+            and any(kw.lower() in title for kw in p["must_have_any"])):
+        return True, hits, "adzuna title names a must-have keyword (JD truncated)"
+
     if hits < p["thresholds"]["keyword_prefilter_min"]:
         return False, hits, f"only {hits} must-have keyword(s)"
     return True, hits, "passed"

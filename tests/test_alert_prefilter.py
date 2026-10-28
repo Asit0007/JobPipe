@@ -124,3 +124,29 @@ def test_adzuna_landing_pages_are_skipped():
     from jobpipe.jdfetch import SKIP_HOSTS
     for host in ("www.adzuna.in", "www.adzuna.com", "adzuna.co.uk"):
         assert any(h in host for h in SKIP_HOSTS), f"{host} should be skipped"
+
+
+# --- Adzuna's truncated descriptions (2026-10-28) ------------------------------
+# Every Adzuna description stops at ~500 characters, so a real Azure admin role
+# often shows one keyword and dies. One hit is enough when the title names it.
+ADZUNA_CUT = "We are hiring for our client in Bangalore. The candidate will manage " \
+             "virtual machines, backups and patching for a large enterprise..."
+
+
+def test_adzuna_title_with_a_must_have_term_passes_on_one_hit():
+    for title in ("Azure Administrator", "Linux Administrator", "Azure DevOps Engineer"):
+        ok, hits, why = prefilter(_job(title=title, description=ADZUNA_CUT, source="adzuna"))
+        assert ok and hits == 1, f"{title!r} was killed: {why}"
+
+
+def test_one_hit_from_another_source_is_still_killed():
+    """Greenhouse descriptions are whole, so one hit there means one hit."""
+    ok, hits, why = prefilter(_job(title="Azure Administrator", description=ADZUNA_CUT,
+                                   source="greenhouse"))
+    assert not ok and hits == 1 and "must-have keyword" in why
+
+
+def test_adzuna_one_hit_only_in_the_description_is_still_killed():
+    ok, hits, _ = prefilter(_job(title="Systems Administrator",
+                                 description=ADZUNA_CUT + " Azure", source="adzuna"))
+    assert not ok and hits == 1
